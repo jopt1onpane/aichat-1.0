@@ -40,3 +40,7 @@ secrets.json
 # BepInEx 虽然是开源的，也不应包含在仓库内。
 /build-resource/assets/BepInEx_win_x64/**
 !/build-resource/assets/BepInEx_win_x64/LICENSE
+
+# 反编译的游戏代码（仅本地参考，不提交）
+game-decompiled/
+GitHub上传指南.md
