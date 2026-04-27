@@ -893,26 +893,17 @@ namespace ChillAIMod
         {
             _isProcessing = true;
 
-            // 1. 获取并处理 UI
-            GameObject canvas = GameObject.Find("Canvas");
-            if (canvas == null) { _isProcessing = false; yield break; }
-            Transform originalTextTrans = canvas.transform.Find("StorySystemUI/MessageWindow/NormalTextParent/NormalTextMessage");
-            if (originalTextTrans == null) { _isProcessing = false; yield break; }
-            GameObject originalTextObj = originalTextTrans.gameObject;
-            GameObject parentObj = originalTextObj.transform.parent.gameObject;
-            Dictionary<GameObject, bool> uiStatusMap = new Dictionary<GameObject, bool>();
-            UIHelper.ForceShowWindow(originalTextObj, uiStatusMap);
-            originalTextObj.SetActive(false);
-            GameObject myTextObj = UIHelper.CreateOverlayText(parentObj);
+            // 1. 创建独立的 Overlay Canvas 显示字幕（不触碰游戏原有 UI，不会阻挡点击）
+            GameObject overlayCanvasObj = UIHelper.CreateOverlayCanvas();
+            GameObject myTextObj = UIHelper.CreateOverlayText(overlayCanvasObj);
             Text myText = myTextObj.GetComponent<Text>();
-            myText.text = "";
+            myText.text = "Thinking...";
             myText.color = Color.white;
 
-            // Phase 3: 用角色思考动画代替 "Thinking..." 文字
             Log.Info("[AI] 开始思考...");
             if (GameBridge._heroineService != null && GameBridge._changeAnimSmoothMethod != null && GameBridge.IsHeroineStateSafe())
             {
-                GameBridge.CallNativeChangeAnim(252); // Think animation
+                GameBridge.CallNativeChangeAnim(252);
                 GameBridge.ControlLookAt(1.0f, 0.5f);
             }
 
@@ -939,6 +930,7 @@ namespace ChillAIMod
             bool success = false;
 
             // 3. 发送 Chat 请求
+            myText.text = "message is sending through cyberspace...";
             yield return LLMClient.SendLLMRequest(
                 requestContext,
                 rawResponse =>
@@ -974,7 +966,7 @@ namespace ChillAIMod
                 myText.color = Color.red;
 
                 yield return new WaitForSecondsRealtime(3.0f);
-                UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
+                UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
                 _isProcessing = false;
                 yield break;
             }
@@ -996,22 +988,18 @@ namespace ChillAIMod
 
                 if (!string.IsNullOrEmpty(voiceText) && isJapanese)
                 {
-                    // Phase 3 并行化：先显示字幕+动作，同时后台下载语音
                     myText.text = subtitleText;
                     myText.color = Color.white;
 
                     AudioClip downloadedClip = null;
                     bool ttsFinished = false;
 
-                    // 启动 TTS 下载协程（后台）
                     StartCoroutine(TTSDownloadAsync(voiceText, (clip) =>
                     {
                         downloadedClip = clip;
                         ttsFinished = true;
                     }));
 
-                    // 先做动作，等 TTS 完成后再播放语音
-                    // 给 TTS 一点时间（最多等 8 秒），同时角色先做动作
                     if (GameBridge.IsHeroineStateSafe())
                     {
                         int animID;
@@ -1048,9 +1036,6 @@ namespace ChillAIMod
                         Log.Warning("[TTS] 语音下载失败或超时，仅显示字幕");
                         yield return new WaitForSecondsRealtime(3.0f);
                     }
-
-                    GameBridge.CallNativeChangeAnim(250);
-                    GameBridge.RestoreLookAt();
                 }
                 else
                 {
@@ -1061,9 +1046,11 @@ namespace ChillAIMod
                 }
             }
 
-            // 5. 清理
-            UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
+            // 5. 清理：恢复动画状态 + 归还控制权 + 销毁字幕 Canvas
+            GameBridge.SafeResetAfterMod();
+            UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
             _isProcessing = false;
+            Log.Info("[AI] 对话结束，已归还游戏控制权");
         }
 
         IEnumerator TTSDownloadAsync(string voiceText, Action<AudioClip> onComplete)
@@ -1192,8 +1179,6 @@ namespace ChillAIMod
                 Log.Warning("等待结束，强制停止语音播放");
                 _audioSource.Stop();
             }
-            GameBridge.CallNativeChangeAnim(250);
-            GameBridge.RestoreLookAt();
             _isAISpeaking = false;
         }
 
@@ -1392,7 +1377,6 @@ namespace ChillAIMod
             {
                 // Strategy: find the container by locating known game buttons first
                 Transform buttonContainer = null;
-                Transform referenceButton = null; // the lowest existing button (日记/Calendar)
 
                 // Step 1: Try known paths
                 string[] candidatePaths = new string[]

@@ -104,5 +104,73 @@ namespace AIChat.Unity
                 return true;
             }
         }
+
+        /// <summary>
+        /// 对话结束后彻底恢复游戏状态，确保原生点击交互不受影响。
+        /// </summary>
+        public static void SafeResetAfterMod()
+        {
+            try
+            {
+                if (_cachedAnimator != null)
+                {
+                    _cachedAnimator.SetBool("Enable_Talk", false);
+                }
+
+                if (_heroineService != null && _changeAnimSmoothMethod != null)
+                {
+                    RestoreLookAt();
+
+                    int safeAnimId = GetCurrentSafeAnimId();
+                    CallNativeChangeAnim(safeAnimId);
+                    Log.Info($"[GameBridge] SafeReset: 恢复动画到 {safeAnimId}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] SafeReset 出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 根据 HeroineAI 状态机的当前状态，返回对应的安全 Animator ID。
+        /// 避免强制设回 250(WorkBase002) 导致和状态机不匹配。
+        /// </summary>
+        private static int GetCurrentSafeAnimId()
+        {
+            if (_heroineAI == null || _actionStateMachineField == null) return 250;
+
+            try
+            {
+                object stateMachine = _actionStateMachineField.GetValue(_heroineAI);
+                if (stateMachine == null) return 250;
+
+                PropertyInfo keyProp = stateMachine.GetType().GetProperty("CurrentStateKey", BindingFlags.Public | BindingFlags.Instance);
+                if (keyProp == null) return 250;
+
+                int stateKey = (int)keyProp.GetValue(stateMachine);
+
+                switch (stateKey)
+                {
+                    case 19: return 300; // WorkPC -> PCBase
+                    case 20: return 350; // WorkBook
+                    case 21: return 400; // WorkReport
+                    case 5: return 200;  // BreakForward
+                    case 6: return 260;  // BreakTeaTime
+                    case 7: return 270;  // BreakReadBook
+                    case 8: return 280;  // BreakMovie
+                    case 11: return 290; // BreakListenMusic
+                    case 16: return 300; // BreakSleep
+                    default:
+                        Log.Info($"[GameBridge] 状态机 key={stateKey}，回退到默认动画 250");
+                        return 250;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] GetCurrentSafeAnimId 出错: {ex.Message}");
+                return 250;
+            }
+        }
     }
 }

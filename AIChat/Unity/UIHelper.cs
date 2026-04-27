@@ -1,61 +1,35 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
+using AIChat.Utils;
 
 namespace AIChat.Unity
 {
     public static class UIHelper
     {
-        private static readonly Dictionary<CanvasGroup, float> _savedCanvasGroupAlpha = new Dictionary<CanvasGroup, float>();
-
-        public static void ForceShowWindow(GameObject target, Dictionary<GameObject, bool> uiStatusMap)
+        /// <summary>
+        /// 创建一个独立的 ScreenSpaceOverlay Canvas，专门用于 AI 字幕。
+        /// 不带 GraphicRaycaster，因此不会阻挡游戏的 EventSystem 点击检测。
+        /// </summary>
+        public static GameObject CreateOverlayCanvas()
         {
-            target.SetActive(true);
-            var p = target.transform.parent;
-            while (p != null && p.name != "Canvas")
-            {
-                if (uiStatusMap != null && !uiStatusMap.ContainsKey(p.gameObject))
-                {
-                    uiStatusMap.Add(p.gameObject, p.gameObject.activeSelf);
-                }
-                p.gameObject.SetActive(true);
-                p = p.parent;
-            }
+            GameObject canvasObj = new GameObject(">>> AI_Overlay_Canvas <<<");
+            Canvas canvas = canvasObj.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 999;
 
-            _savedCanvasGroupAlpha.Clear();
-            foreach (var cg in target.GetComponentsInParent<CanvasGroup>())
-            {
-                _savedCanvasGroupAlpha[cg] = cg.alpha;
-                cg.alpha = 1f;
-            }
+            CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.matchWidthOrHeight = 0.5f;
 
-            if (target.transform.parent != null && target.transform.parent.parent != null)
-                target.transform.parent.parent.localScale = Vector3.one;
+            return canvasObj;
         }
 
-        public static void RestoreUiStatus(Dictionary<GameObject, bool> uiStatusMap, GameObject myTextObj, GameObject originalTextObj)
+        public static void DestroyOverlayCanvas(GameObject overlayCanvasObj)
         {
-            foreach (var kvp in _savedCanvasGroupAlpha)
-            {
-                if (kvp.Key != null) kvp.Key.alpha = kvp.Value;
-            }
-            _savedCanvasGroupAlpha.Clear();
-
-            if (uiStatusMap != null)
-            {
-                foreach (var kvp in uiStatusMap)
-                {
-                    if (kvp.Key != null) kvp.Key.SetActive(kvp.Value);
-                }
-                uiStatusMap.Clear();
-            }
-
-            if (myTextObj != null) UnityEngine.Object.Destroy(myTextObj);
-            if (originalTextObj != null) originalTextObj.SetActive(true);
+            if (overlayCanvasObj != null) UnityEngine.Object.Destroy(overlayCanvasObj);
         }
 
         public static GameObject CreateOverlayText(GameObject parent)
@@ -63,14 +37,35 @@ namespace AIChat.Unity
             GameObject go = new GameObject(">>> AI_TEXT <<<");
             go.transform.SetParent(parent.transform, false);
             RectTransform rt = go.AddComponent<RectTransform>();
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.sizeDelta = Vector2.zero;
+            rt.anchorMin = new Vector2(0.1f, 0.05f);
+            rt.anchorMax = new Vector2(0.9f, 0.25f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+
+            GameObject bgObj = new GameObject("AI_TEXT_BG");
+            bgObj.transform.SetParent(go.transform, false);
+            RectTransform bgRt = bgObj.AddComponent<RectTransform>();
+            bgRt.anchorMin = Vector2.zero; bgRt.anchorMax = Vector2.one;
+            bgRt.offsetMin = new Vector2(-10, -10);
+            bgRt.offsetMax = new Vector2(10, 10);
+            Image bgImage = bgObj.AddComponent<Image>();
+            bgImage.color = new Color(0f, 0f, 0f, 0.6f);
+            bgImage.raycastTarget = false;
+
             Text txt = go.AddComponent<Text>();
-            txt.fontSize = 26;
-            txt.alignment = TextAnchor.UpperCenter;
+            txt.fontSize = 28;
+            txt.alignment = TextAnchor.MiddleCenter;
             txt.horizontalOverflow = HorizontalWrapMode.Wrap;
+            txt.verticalOverflow = VerticalWrapMode.Overflow;
+            txt.raycastTarget = false;
             Font f = Resources.GetBuiltinResource<Font>("Arial.ttf");
             if (f == null) f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (f != null) txt.font = f;
+
+            Outline outline = go.AddComponent<Outline>();
+            outline.effectColor = new Color(0, 0, 0, 0.8f);
+            outline.effectDistance = new Vector2(1, -1);
+
             return go;
         }
     }
