@@ -19,12 +19,22 @@ namespace AIChat.Unity
         public static MethodInfo _lookInitMethod;
         public static MethodInfo _lookAtMethod;
 
+        private static MonoBehaviour _heroineAI;
+        private static FieldInfo _actionStateMachineField;
+        private static PropertyInfo _currentStateProperty;
+
+        private static readonly HashSet<string> _unsafeStates = new HashSet<string>
+        {
+            "ScenarioState", "SleepState", "StandUpState", "SitDownState", "WalkState"
+        };
+
         public static void FindHeroineService()
         {
             var allComponents = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
             foreach (var comp in allComponents)
             {
-                if (comp.GetType().FullName == "Bulbul.HeroineService")
+                string typeName = comp.GetType().FullName;
+                if (typeName == "Bulbul.HeroineService")
                 {
                     _heroineService = comp;
                     _cachedAnimator = comp.GetComponent<Animator>();
@@ -34,11 +44,19 @@ namespace AIChat.Unity
                     _lookAtMethod = comp.GetType().GetMethod("ChangeLookScaleAnimation", BindingFlags.Public | BindingFlags.Instance);
 
                     if (_changeAnimSmoothMethod != null) Log.Warning($"✅ 核心连接成功: {comp.gameObject.name}");
-                    return;
+                }
+                else if (typeName == "Bulbul.HeroineAI")
+                {
+                    _heroineAI = comp;
+                    _actionStateMachineField = comp.GetType().GetField("_actionStateMachine", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (_actionStateMachineField != null)
+                    {
+                        Log.Info("[GameBridge] HeroineAI 状态机字段已缓存");
+                    }
                 }
             }
         }
-        // --- 辅助方法 ---
+
         public static void CallNativeChangeAnim(int id)
         {
             try { _changeAnimSmoothMethod.Invoke(_heroineService, new object[] { id }); }
@@ -53,8 +71,38 @@ namespace AIChat.Unity
 
         public static void RestoreLookAt()
         {
-            if (_lookInitMethod != null) try {_lookInitMethod.Invoke(_heroineService, null); } catch { }
+            if (_lookInitMethod != null) try { _lookInitMethod.Invoke(_heroineService, null); } catch { }
         }
 
+        public static bool IsHeroineStateSafe()
+        {
+            if (_heroineAI == null || _actionStateMachineField == null) return true;
+
+            try
+            {
+                object stateMachine = _actionStateMachineField.GetValue(_heroineAI);
+                if (stateMachine == null) return true;
+
+                if (_currentStateProperty == null)
+                {
+                    _currentStateProperty = stateMachine.GetType().GetProperty("CurrentState", BindingFlags.Public | BindingFlags.Instance);
+                }
+
+                if (_currentStateProperty == null) return true;
+
+                object currentState = _currentStateProperty.GetValue(stateMachine);
+                if (currentState == null) return true;
+
+                string stateName = currentState.GetType().Name;
+                bool safe = !_unsafeStates.Contains(stateName);
+                if (!safe) Log.Info($"[GameBridge] 状态不安全，跳过动画: {stateName}");
+                return safe;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] 读取状态机失败: {ex.Message}");
+                return true;
+            }
+        }
     }
 }

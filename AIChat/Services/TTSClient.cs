@@ -1,4 +1,4 @@
-﻿using AIChat.Core;
+using AIChat.Core;
 using BepInEx.Logging;
 using System;
 using System.Collections;

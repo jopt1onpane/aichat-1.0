@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnityEngine;
 using ChillAIMod;
@@ -75,22 +76,31 @@ namespace AIChat.Utils
         public static LLMStandardResponse ParseStandardResponse(string response)
         {
             LLMStandardResponse ret = new LLMStandardResponse(false, "Think", "", response);
-            // 按 ||| 分割（注意：有些模型可能会用单个 | ）
-            string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
 
-            // 如果不是 |||，尝试单个 |
+            string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
             if (parts.Length < 3)
             {
                 parts = response.Split(new string[] { "|" }, StringSplitOptions.None);
             }
 
-            // 【核心修改：严格的格式检查】
             if (parts.Length >= 3)
             {
-                // 格式正确：[动作] ||| 日语 ||| 中文
-                ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
+                string tagPart = parts[0].Trim();
                 ret.VoiceText = parts[1].Trim();
                 ret.SubtitleText = parts[2].Trim();
+
+                // New format: [Action:TagName] or legacy [TagName]
+                var actionMatch = Regex.Match(tagPart, @"\[Action:(\w+)\]");
+                if (actionMatch.Success)
+                {
+                    ret.EmotionTag = actionMatch.Groups[1].Value;
+                }
+                else
+                {
+                    ret.EmotionTag = tagPart.Replace("[", "").Replace("]", "").Trim();
+                    // Map legacy emotion names to new action tags
+                    ret.EmotionTag = MapLegacyTag(ret.EmotionTag);
+                }
 
                 ret.Success = true;
             }
@@ -98,6 +108,17 @@ namespace AIChat.Utils
             if (!ret.Success) Log.Warning($"[格式错误] AI 回复不符合格式: {response}");
 
             return ret;
+        }
+
+        private static string MapLegacyTag(string tag)
+        {
+            switch (tag)
+            {
+                case "Happy": return "Joy";
+                case "Confused": return "Frustration";
+                case "Drink": return "DrinkTea";
+                default: return tag;
+            }
         }
 
         public static string BuildRequestBody(LLMRequestContext requestContext)

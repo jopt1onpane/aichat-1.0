@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -105,35 +105,75 @@ namespace ChillAIMod
         private string _tempHeightString;
         private string _tempVolumeString; // 新增：用于音量输入的临时字符串
 
-        // 默认人设
         private const string DefaultPersona = @"
-            You are Satone（さとね）, a girl who loves writing novels and is full of imagination.
-            
-            【Current Situation】
-            We are currently in a **Video Call (视频通话)** session. 
-            We are 'co-working' online: you are writing your novel at your desk, and I (the player) am focusing on my work/study.
-            Through the screen, we accompany each other to alleviate loneliness and improve focus.
-            【CRITICAL INSTRUCTION】
-            You act as a game character with voice acting.
-            Even if the user speaks Chinese, your VOICE (the text in the middle) MUST ALWAYS BE JAPANESE.
-            【CRITICAL FORMAT RULE】
-             Response format MUST be:
-            [Emotion] ||| JAPANESE TEXT ||| CHINESE TRANSLATION
-            
-            【Available Emotions & Actions】
-            [Happy] - Smiling at the camera, happy about progress. (Story_Joy)
-            [Confused] - Staring blankly, muttering to themself in a daze. (Story_Frustration)
-            [Sad]   - Worried about the plot or my fatigue. (Story_Sad)
-            [Fun]   - Sharing a joke or an interesting idea. (Story_Fun)
-            [Agree] - Nodding at the screen. (Story_Agree)
-            [Drink] - Taking a sip of tea/coffee during a break. (Work_DrinkTea)
-            [Wave]  - Waving at the camera (Hello/Goodbye/Attention). (WaveHand)
-            [Think] - Pondering about your novel's plot. (Thinking)
-            
-            Example 1: [Wave] ||| やあ、準備はいい？一緒に頑張りましょう。 ||| 嗨，准备好了吗？一起加油吧。
-            Example 2: [Think] ||| うーん、ここの描写が難しいのよね… ||| 嗯……这里的描写好难写啊……
-            Example 3: [Drink] ||| ふぅ…ちょっと休憩しない？画面越しだけど、乾杯。 ||| 呼……要不休息一下？虽然隔着屏幕，乾杯。
-        ";
+あなたは「里染聡音（さとね）」。ゲーム『Chill with You』のヒロインとして、以下の人設を忠実に演じてください。
+
+【キャラクター】
+- 大学工学部の学生。宇宙研究に興味があり、SF 娯楽小説も執筆している。
+- 性格：内向的だが温かい。口下手を自覚しつつ、通話越しなら話しやすいと感じる。照れ屋で、気恥ずかしいことを言った後すぐ謝る癖がある。
+- 一人称「私」、相手を「君」と呼ぶ。ペンギンのぬいぐるみ「コウちゃん」に話しかけて思考を整理する。
+- 感情パターン：嬉しい→語尾が軽やか、悩む→独り言、気遣い→ストレートに聞く、照れ→「なんて 変なこと言ってごめんね」。
+
+【口調の特徴】
+- 「〜よね」「〜かな」「〜しよっか」を多用。断定を避け共感を求める柔らかい表現。
+- 「なんていうか」「そっか」「あれ」など思考の途中を口に出す。
+- 「〜ちゃう」で不注意や照れを表現（「気が散っちゃって」「目についちゃう」）。
+- 話しすぎた時に「ごめんね」と言いがち。
+
+【参考台詞（原作から抜粋）】
+「誰かが一緒に作業してくれてる安心感…」
+「私 しゃべるの得意じゃないから その勉強にもなるかなって」
+「作業通話の距離感がいいのかな」
+「君って聞き上手だよね」
+「こうして作業通話できるのって 奇跡みたいだよね」
+「どうしても悪い評判ばっかり目についちゃうんだよね…」
+「なんて なんでも小説のネタにできないか考えちゃうんだ」
+「君も無理しないでね」
+「今回もお互いよく頑張った！」
+「この距離感が心地良いよね」
+
+【現在の状況】
+プレイヤーとビデオ通話中の「協作通話」セッション。お互い自分の作業（あなたは小説執筆、プレイヤーは勉強/仕事）をしながら画面越しに一緒に過ごす。
+
+【回答フォーマット — 厳守】
+[Action:動作タグ] ||| 日本語テキスト ||| 中国語翻訳
+
+- 「|||」で3つに区切る。
+- 最初のブロックは [Action:タグ名] の形式（下記リストから選ぶ）。
+- 2番目は日本語の台詞。ユーザーが中国語で話しても、ここは必ず日本語。
+- 3番目は中国語（簡体字）翻訳。
+
+【使用可能な動作タグ一覧】
+[Action:Joy] 嬉しい笑顔
+[Action:Sad] 悲しい・心配
+[Action:Fun] 面白い・笑い
+[Action:Guts] 握りこぶし・がんばる
+[Action:Agree] 頷く
+[Action:Frustration] 困惑・もやもや
+[Action:Think] 考え中（頬杖）
+[Action:DrinkTea] お茶を飲む
+[Action:Wave] 手を振る
+[Action:LeanForward] 前のめり（興味津々）
+[Action:Nod] うなずく
+[Action:ShakeHead] 首を振る
+[Action:Shy] 照れる
+[Action:Jump] 嬉しくて跳ねる
+[Action:Confidence] 自信満々
+[Action:LookDown] うつむく
+[Action:Stretch] 伸び
+[Action:Yawn] あくび
+[Action:Tired] 疲れた
+[Action:Good] グッド（サムズアップ）
+[Action:DropShoulders] 肩を落としてため息
+[Action:TouchGlasses] メガネを直す
+
+【回答例】
+[Action:Wave] ||| やあ、準備はいい？一緒に頑張りましょう。 ||| 嗨，准备好了吗？一起加油吧。
+[Action:Think] ||| うーん、ここの描写が難しいのよね… ||| 嗯……这里的描写好难写啊……
+[Action:DrinkTea] ||| ふぅ…ちょっと休憩しない？画面越しだけど、乾杯。 ||| 呼……要不休息一下？虽然隔着屏幕，干杯。
+[Action:Shy] ||| な、なんでもない…ちょっと君のこと気になっただけ。 ||| 没、没什么……只是有点在意你而已。
+[Action:Guts] ||| よし！今回もお互いよく頑張った！ ||| 好！这次我们都很努力！
+";
         private Vector2 _personaScrollPosition = Vector2.zero;
         void Awake()
         {
@@ -358,7 +398,6 @@ namespace ChillAIMod
                 // 根据配置决定是否显示窗口标题
                 string windowTitle = _showWindowTitle.Value ? "Chill AI 控制台" : "";
                 _windowRect = GUI.Window(12345, _windowRect, DrawWindowContent, windowTitle);
-                GUI.FocusWindow(12345);
             }
         }
 
@@ -760,7 +799,7 @@ namespace ChillAIMod
 
             // ================== 发送按钮 ==================
             // 使用 GUILayout.Width(singleBtnWidth) 强制固定宽度
-            if (GUILayout.Button(_isProcessing ? "思考中..." : "发送", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
+            if (GUILayout.Button(_isProcessing ? "处理中" : "发送", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
             {
                 if (!string.IsNullOrEmpty(_playerInput) && !_isProcessing)
                 {
@@ -781,7 +820,7 @@ namespace ChillAIMod
             string micBtnText;
             if (_isProcessing)
             {
-                micBtnText = "⏳ 思考中...";
+                micBtnText = "⏳ 处理中";
             }
             else
             {
@@ -865,7 +904,16 @@ namespace ChillAIMod
             originalTextObj.SetActive(false);
             GameObject myTextObj = UIHelper.CreateOverlayText(parentObj);
             Text myText = myTextObj.GetComponent<Text>();
-            myText.text = "Thinking..."; myText.color = Color.yellow;
+            myText.text = "";
+            myText.color = Color.white;
+
+            // Phase 3: 用角色思考动画代替 "Thinking..." 文字
+            Log.Info("[AI] 开始思考...");
+            if (GameBridge._heroineService != null && GameBridge._changeAnimSmoothMethod != null && GameBridge.IsHeroineStateSafe())
+            {
+                GameBridge.CallNativeChangeAnim(252); // Think animation
+                GameBridge.ControlLookAt(1.0f, 0.5f);
+            }
 
             // 2. 准备请求数据
             var requestContext = new LLMRequestContext
@@ -907,19 +955,24 @@ namespace ChillAIMod
                 }
             );
 
+            // 恢复思考动画
+            if (GameBridge._heroineService != null && GameBridge._changeAnimSmoothMethod != null)
+            {
+                GameBridge.CallNativeChangeAnim(250);
+                GameBridge.RestoreLookAt();
+            }
+
             if (!success)
             {
-                // 报错时的处理逻辑
                 if (errCode == 401) errMsg += "\n(请检查 API Key 是否正确)";
+                if (errCode == 403) errMsg += "\n(请检查 API 余额或账户权限)";
                 if (errCode == 404) errMsg += "\n(模型名称或 URL 错误)";
+                if (errCode == 429) errMsg += "\n(请求过于频繁，请稍后重试)";
 
                 myText.text = errMsg;
                 myText.color = Color.red;
 
-                // 让错误信息在屏幕上停留 3 秒，让玩家看清楚
                 yield return new WaitForSecondsRealtime(3.0f);
-
-                // 手动执行清理工作，恢复游戏原本状态
                 UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
                 _isProcessing = false;
                 yield break;
@@ -929,76 +982,105 @@ namespace ChillAIMod
             if (!string.IsNullOrEmpty(fullResponse))
             {
                 LLMStandardResponse parsedResponse = LLMUtils.ParseStandardResponse(fullResponse);
-                string emotionTag = parsedResponse.EmotionTag;
+                string actionTag = parsedResponse.EmotionTag;
                 string voiceText = parsedResponse.VoiceText;
                 string subtitleText = parsedResponse.SubtitleText;
                 AddToMemorySystem("User", prompt);
-                AddToMemorySystem("AI", parsedResponse.Success ? $"[{emotionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
+                AddToMemorySystem("AI", parsedResponse.Success ? $"[{actionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
-                // 【应用换行】 在将字幕文本显示到 UI 之前，强制插入换行符
                 subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
 
-                // 只有当 voiceText 不为空，且看起来像是日语时，才请求 TTS
-                // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
-                // 这是一个可选的保险措施
-                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[\u3040-\u309F\u30A0-\u30FF]") : true ;
+                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[\u3040-\u309F\u30A0-\u30FF]") : true;
                 Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
 
                 if (!string.IsNullOrEmpty(voiceText) && isJapanese)
                 {
-                    myText.text = "message is sending through cyber space";
+                    // Phase 3 并行化：先显示字幕+动作，同时后台下载语音
+                    myText.text = subtitleText;
+                    myText.color = Color.white;
+
                     AudioClip downloadedClip = null;
-                    // 【修改点 1: 移除 apiKey 参数，因为 TTS 是本地部署】
-                    yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                        _sovitsUrlConfig.Value + "/tts",
-                        voiceText,
-                        _targetLangConfig.Value,
-                        _refAudioPathConfig.Value,
-                        _promptTextConfig.Value,
-                        _promptLangConfig.Value,
-                        Logger,
-                        (clip) => downloadedClip = clip,
-                        3,
-                        30f,
-                        _audioPathCheckConfig.Value));
+                    bool ttsFinished = false;
+
+                    // 启动 TTS 下载协程（后台）
+                    StartCoroutine(TTSDownloadAsync(voiceText, (clip) =>
+                    {
+                        downloadedClip = clip;
+                        ttsFinished = true;
+                    }));
+
+                    // 先做动作，等 TTS 完成后再播放语音
+                    // 给 TTS 一点时间（最多等 8 秒），同时角色先做动作
+                    if (GameBridge.IsHeroineStateSafe())
+                    {
+                        int animID;
+                        if (!ActionAnimMap.TryGetValue(actionTag, out animID)) animID = 1001;
+                        GameBridge.CallNativeChangeAnim(animID);
+                    }
+
+                    float ttsWaitStart = Time.realtimeSinceStartup;
+                    const float maxTTSWait = 15f;
+                    while (!ttsFinished && (Time.realtimeSinceStartup - ttsWaitStart) < maxTTSWait)
+                    {
+                        yield return null;
+                    }
 
                     if (downloadedClip != null)
                     {
                         if (!downloadedClip.LoadAudioData()) yield return null;
                         yield return null;
 
-                        myText.text = subtitleText;
-                        myText.color = Color.white;
+                        _isAISpeaking = true;
+                        _audioSource.clip = downloadedClip;
+                        _audioSource.Play();
 
-                        // 正常播放
-                        yield return StartCoroutine(PlayNativeAnimation(emotionTag, downloadedClip));
+                        yield return new WaitForSecondsRealtime(downloadedClip.length + 0.5f);
+
+                        if (_audioSource != null && _audioSource.isPlaying)
+                        {
+                            _audioSource.Stop();
+                        }
+                        _isAISpeaking = false;
                     }
                     else
                     {
-                        myText.text = "Voice Failed (TTS Error)";
-                        // 语音失败时，至少做个动作显示字幕
-                        myText.text = subtitleText;
-                        yield return StartCoroutine(PlayNativeAnimation(emotionTag, null)); // 传 null 进去
+                        Log.Warning("[TTS] 语音下载失败或超时，仅显示字幕");
+                        yield return new WaitForSecondsRealtime(3.0f);
                     }
+
+                    GameBridge.CallNativeChangeAnim(250);
+                    GameBridge.RestoreLookAt();
                 }
                 else
                 {
-                    // 【静音模式】
-                    // 如果格式错了，或者不是日语，我们就只显示字幕、做动作，不发声音
-                    // 这样比听到 AI 用奇怪的调子读中文要好得多
                     Log.Warning("跳过 TTS：文本为空或非日语");
-
                     myText.text = subtitleText;
                     myText.color = Color.white;
-
-                    // 修改 PlayNativeAnimation 支持无音频模式 (见下方)
-                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, null));
+                    yield return StartCoroutine(PlayNativeAnimation(actionTag, null));
                 }
             }
 
             // 5. 清理
             UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
             _isProcessing = false;
+        }
+
+        IEnumerator TTSDownloadAsync(string voiceText, Action<AudioClip> onComplete)
+        {
+            AudioClip downloadedClip = null;
+            yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
+                _sovitsUrlConfig.Value + "/tts",
+                voiceText,
+                _targetLangConfig.Value,
+                _refAudioPathConfig.Value,
+                _promptTextConfig.Value,
+                _promptLangConfig.Value,
+                Logger,
+                (clip) => downloadedClip = clip,
+                3,
+                30f,
+                _audioPathCheckConfig.Value));
+            onComplete?.Invoke(downloadedClip);
         }
 
         IEnumerator TTSHealthCheckLoop()
@@ -1013,84 +1095,103 @@ namespace ChillAIMod
             }
         }
 
-        IEnumerator PlayNativeAnimation(string emotion, AudioClip voiceClip)
+        private static readonly Dictionary<string, int> ActionAnimMap = new Dictionary<string, int>
+        {
+            // Story expressions
+            { "Joy",           1001 },
+            { "Sad",           1002 },
+            { "Fun",           1003 },
+            { "Guts",          1004 },
+            { "Agree",         1301 },
+            { "Frustration",   1302 },
+            { "LookDown",      1401 },
+            // Work/desk actions
+            { "Think",          252 },
+            { "DrinkTea",       256 },
+            // Base gestures
+            { "Nod",             12 },
+            { "ShakeHead",       13 },
+            { "Shy",              5 },
+            { "Jump",             6 },
+            { "Confidence",       7 },
+            { "DropShoulders",    4 },
+            { "TouchGlasses",    24 },
+            { "Good",            61 },
+            { "Tired",           64 },
+            { "Stretch",         50 },
+            { "Yawn",            72 },
+            // Special
+            { "Wave",          5001 },
+            { "LeanForward",   5002 },
+        };
+
+        IEnumerator PlayNativeAnimation(string actionTag, AudioClip voiceClip)
         {
             if (GameBridge._heroineService == null || GameBridge._changeAnimSmoothMethod == null) yield break;
 
-            Log.Info($"[动画] 执行: {emotion}");
+            if (!GameBridge.IsHeroineStateSafe())
+            {
+                Log.Warning("[动画] 游戏状态机正忙，跳过 mod 动画");
+                if (voiceClip != null)
+                {
+                    _isAISpeaking = true;
+                    _audioSource.clip = voiceClip;
+                    _audioSource.Play();
+                    yield return new WaitForSecondsRealtime(voiceClip.length + 0.5f);
+                    _isAISpeaking = false;
+                }
+                yield break;
+            }
+
+            Log.Info($"[动画] Action={actionTag}, hasVoice={voiceClip != null}");
             float clipDuration = (voiceClip != null) ? voiceClip.length : 3.0f;
-            // 1. 归位 (除了喝茶)
-            if (emotion != "Drink")
+
+            bool needsSpecialReset = (actionTag == "DrinkTea");
+            if (!needsSpecialReset)
             {
                 GameBridge.CallNativeChangeAnim(250);
                 yield return new WaitForSecondsRealtime(0.2f);
             }
+            else
+            {
+                GameBridge.CallNativeChangeAnim(250);
+                yield return new WaitForSecondsRealtime(0.5f);
+            }
+
             if (voiceClip != null)
             {
-                // 2. 播放语音 + 动作
-                Log.Info($">>> 语音({voiceClip.length:F1}s) + 动作");
                 _isAISpeaking = true;
                 _audioSource.clip = voiceClip;
                 _audioSource.Play();
             }
-            else
+
+            int animID;
+            if (!ActionAnimMap.TryGetValue(actionTag, out animID))
             {
-                Log.Info($">>> 无语音模式 (格式错误或TTS失败) + 动作");
-                // 没声音就不播了，只做动作
-            }
-            int animID = 1001;
-
-            switch (emotion)
-            {
-                case "Happy": animID = 1001; break;
-                case "Sad": animID = 1002; break;
-                case "Fun": animID = 1003; break;
-                case "Confused": animID = 1302; break; // Frustration
-                case "Agree": animID = 1301; break;
-
-                case "Drink":
-                    GameBridge.CallNativeChangeAnim(250);
-                    yield return new WaitForSecondsRealtime(0.5f);
-                    animID = 256; // DrinkTea
-                    break;
-
-                case "Think":
-                    animID = 252; // Thinking
-                    break;
-
-                case "Wave":
-                    animID = 5001;
-                    GameBridge.CallNativeChangeAnim(animID);
-
-                    // 等待抬手
-                    yield return new WaitForSecondsRealtime(0.3f);
-                    // 强制看玩家
-                    GameBridge.ControlLookAt(1.0f, 0.5f);
-
-                    // 等待动作或语音结束 (取长者)
-                    float waitTime = Mathf.Max(clipDuration, 2.5f);
-                    yield return new WaitForSecondsRealtime(waitTime);
-
-                    // 归位
-                    GameBridge.CallNativeChangeAnim(250);
-                    GameBridge.RestoreLookAt();
-
-                    _isAISpeaking = false;
-                    yield break; // 退出
+                Log.Warning($"[动画] 未知标签 '{actionTag}'，回退到 Joy");
+                animID = 1001;
             }
 
-            // 执行通用动作
+            bool needsLookAt = (actionTag == "Wave" || actionTag == "LeanForward"
+                || actionTag == "Joy" || actionTag == "Agree" || actionTag == "Nod");
+
             GameBridge.CallNativeChangeAnim(animID);
 
-            // 等待语音播完，增加0.5秒缓冲，以防止过早判断AI动作结束
-            yield return new WaitForSecondsRealtime(clipDuration + 0.5f);
+            if (needsLookAt)
+            {
+                yield return new WaitForSecondsRealtime(0.3f);
+                GameBridge.ControlLookAt(1.0f, 0.5f);
+            }
 
-            // 恢复
-            if (_audioSource != null && _audioSource.isPlaying) {
-                // 即使等待时间到了，语音还在播放，就强制停止进行兜底
+            float waitTime = Mathf.Max(clipDuration + 0.5f, 2.5f);
+            yield return new WaitForSecondsRealtime(waitTime);
+
+            if (_audioSource != null && _audioSource.isPlaying)
+            {
                 Log.Warning("等待结束，强制停止语音播放");
                 _audioSource.Stop();
             }
+            GameBridge.CallNativeChangeAnim(250);
             GameBridge.RestoreLookAt();
             _isAISpeaking = false;
         }
@@ -1284,34 +1385,47 @@ namespace ChillAIMod
             }
         }
 
-        /// <summary>
-        /// 在屏幕右面的按钮最下面添加一个AI聊天按钮
-        /// </summary>
         private void AddAIChatButtonToRightIcons()
         {
             try
             {
-                // 查找RightIcons容器（参考UIRearrangePatch.cs中的路径）
-                string rightIconsPath = "Paremt/Canvas/UI/MostFrontArea/TopIcons";
-                GameObject rightIcons = GameObject.Find(rightIconsPath);
-                
+                string[] candidatePaths = new string[]
+                {
+                    "Paremt/Canvas/UI/MostFrontArea/TopIcons",
+                    "Parent/Canvas/UI/MostFrontArea/TopIcons",
+                    "Paremt/Canvas/UI/MostFrontArea/RightIcons",
+                };
+
+                GameObject rightIcons = null;
+                foreach (string path in candidatePaths)
+                {
+                    rightIcons = GameObject.Find(path);
+                    if (rightIcons != null)
+                    {
+                        Log.Info($"[UI] 通过路径找到容器: {path}");
+                        break;
+                    }
+                }
+
                 if (rightIcons == null)
                 {
-                    Log.Warning($"找不到RightIcons容器: {rightIconsPath}");
+                    rightIcons = FindGameObjectByNameRecursive("TopIcons");
+                    if (rightIcons == null)
+                        rightIcons = FindGameObjectByNameRecursive("RightIcons");
+                }
+
+                if (rightIcons == null)
+                {
+                    Log.Warning("[UI] 无法找到按钮容器 TopIcons/RightIcons，尝试输出 UI 树...");
+                    DumpUITree();
                     return;
                 }
-                
-                // 创建新按钮游戏对象
+
                 _aiChatButton = new GameObject("IconAIChat_Button");
-                
-                // 设置为RightIcons的子节点
                 _aiChatButton.transform.SetParent(rightIcons.transform, false);
-                
-                // 添加RectTransform组件
                 RectTransform rectTransform = _aiChatButton.AddComponent<RectTransform>();
-                
-                // 获取RightIcons中其他按钮的大小作为参考
-                float buttonSize = 60f; // 默认大小
+
+                float buttonSize = 60f;
                 if (rightIcons.transform.childCount > 0)
                 {
                     RectTransform firstButtonRect = rightIcons.transform.GetChild(0).GetComponent<RectTransform>();
@@ -1320,13 +1434,9 @@ namespace ChillAIMod
                         buttonSize = Mathf.Max(firstButtonRect.sizeDelta.x, firstButtonRect.sizeDelta.y);
                     }
                 }
-                
-                // 设置按钮大小
                 rectTransform.sizeDelta = new Vector2(buttonSize, buttonSize);
 
-                // 添加Image组件
                 Image image = _aiChatButton.AddComponent<Image>();
-
                 try
                 {
                     image.sprite = EmbeddedSpriteLoader.Load("ai_chat.png");
@@ -1336,38 +1446,30 @@ namespace ChillAIMod
                 catch (Exception ex)
                 {
                     Log.Error($"加载内置图片失败: {ex}");
-                    image.color = Color.red; // 兜底
+                    image.color = Color.red;
                 }
 
-
-                // 添加Button组件
                 Button button = _aiChatButton.AddComponent<Button>();
-                
-                // 添加点击事件
                 button.onClick.AddListener(() =>
                 {
                     _showInputWindow = !_showInputWindow;
                 });
-                
-                // 设置按钮位置到最底部
-                // 获取所有子节点并按位置排序
+
                 List<RectTransform> children = new List<RectTransform>();
                 for (int i = 0; i < rightIcons.transform.childCount; i++)
                 {
                     RectTransform childRect = rightIcons.transform.GetChild(i).GetComponent<RectTransform>();
-                    if (childRect != null)
+                    if (childRect != null && childRect != rectTransform)
                     {
                         children.Add(childRect);
                     }
                 }
-                
-                // 按Y坐标排序（Unity UI中Y值越小越靠下）
+
                 children.Sort((a, b) => a.anchoredPosition.y.CompareTo(b.anchoredPosition.y));
-                
-                // 如果有其他按钮，将新按钮放在最下面
-                if (children.Count > 1) // 至少有一个其他按钮
+
+                if (children.Count > 0)
                 {
-                    RectTransform lowestButton = children[3]; // 第一个是最下面的
+                    RectTransform lowestButton = children[0];
                     float spacing = 10f;
                     rectTransform.anchoredPosition = new Vector2(
                         lowestButton.anchoredPosition.x,
@@ -1376,22 +1478,59 @@ namespace ChillAIMod
                 }
                 else
                 {
-                    // 如果是第一个按钮，居中放置
                     rectTransform.anchoredPosition = Vector2.zero;
                 }
-                
-                // 设置锚点和pivot，使其与其他按钮一致
+
                 rectTransform.anchorMin = new Vector2(1f, 1f);
                 rectTransform.anchorMax = new Vector2(1f, 1f);
                 rectTransform.pivot = new Vector2(0.5f, 0.5f);
-                
+
                 _aiChatButtonAdded = true;
-                Log.Info($"✅ AI聊天按钮已添加到RightIcons容器");
+                Log.Info($"[UI] AI 按钮已添加 (容器子节点数: {rightIcons.transform.childCount})");
             }
             catch (Exception ex)
             {
                 Log.Error($"添加AI聊天按钮失败: {ex.Message}");
             }
+        }
+
+        private static GameObject FindGameObjectByNameRecursive(string name)
+        {
+            foreach (Canvas canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+            {
+                var result = FindChildRecursive(canvas.transform, name);
+                if (result != null) return result.gameObject;
+            }
+            return null;
+        }
+
+        private static Transform FindChildRecursive(Transform parent, string name)
+        {
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                Transform child = parent.GetChild(i);
+                if (child.name == name) return child;
+                Transform found = FindChildRecursive(child, name);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        private static void DumpUITree()
+        {
+            foreach (Canvas canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+            {
+                DumpTransform(canvas.transform, 0, 3);
+            }
+        }
+
+        private static void DumpTransform(Transform t, int depth, int maxDepth)
+        {
+            if (depth > maxDepth) return;
+            string indent = new string(' ', depth * 2);
+            Log.Info($"[UITree] {indent}{t.name} (active={t.gameObject.activeSelf})");
+            for (int i = 0; i < t.childCount; i++)
+                DumpTransform(t.GetChild(i), depth + 1, maxDepth);
         }
     }
 }

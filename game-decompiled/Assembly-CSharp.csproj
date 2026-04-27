@@ -1,0 +1,196 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Assembly-CSharp</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <TargetFramework>netstandard2.1</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemGroup />
+  <ItemGroup>
+    <Reference Include="GUPS.Obfuscator">
+      <HintPath>..\..\..\Chill With You_Data\Managed\GUPS.Obfuscator.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Timeline">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.Timeline.dll</HintPath>
+    </Reference>
+    <Reference Include="VContainer">
+      <HintPath>..\..\..\Chill With You_Data\Managed\VContainer.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.DirectorModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.DirectorModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+    </Reference>
+    <Reference Include="R3">
+      <HintPath>..\..\..\Chill With You_Data\Managed\R3.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="DOTween">
+      <HintPath>..\..\..\Chill With You_Data\Managed\DOTween.dll</HintPath>
+    </Reference>
+    <Reference Include="UniTask">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UniTask.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.RenderPipelines.Universal.Runtime">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.RenderPipelines.Universal.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
+    <Reference Include="ObservableCollections">
+      <HintPath>..\..\..\Chill With You_Data\Managed\ObservableCollections.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.AudioModule.dll</HintPath>
+    </Reference>
+    <Reference Include="AudioManager">
+      <HintPath>..\..\..\Chill With You_Data\Managed\AudioManager.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.ParticleSystemModule.dll</HintPath>
+    </Reference>
+    <Reference Include="ES3">
+      <HintPath>..\..\..\Chill With You_Data\Managed\ES3.dll</HintPath>
+    </Reference>
+    <Reference Include="UniTask.DOTween">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UniTask.DOTween.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Text.Json">
+      <HintPath>..\..\..\Chill With You_Data\Managed\System.Text.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="Firebase.App">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Firebase.App.dll</HintPath>
+    </Reference>
+    <Reference Include="R3.Unity">
+      <HintPath>..\..\..\Chill With You_Data\Managed\R3.Unity.dll</HintPath>
+    </Reference>
+    <Reference Include="StandaloneFileBrowser">
+      <HintPath>..\..\..\Chill With You_Data\Managed\StandaloneFileBrowser.dll</HintPath>
+    </Reference>
+    <Reference Include="com.rlabrecque.steamworks.net">
+      <HintPath>..\..\..\Chill With You_Data\Managed\com.rlabrecque.steamworks.net.dll</HintPath>
+    </Reference>
+    <Reference Include="AppleAuth">
+      <HintPath>..\..\..\Chill With You_Data\Managed\AppleAuth.dll</HintPath>
+    </Reference>
+    <Reference Include="SimpleSignIn">
+      <HintPath>..\..\..\Chill With You_Data\Managed\SimpleSignIn.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Addressables">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.Addressables.dll</HintPath>
+    </Reference>
+    <Reference Include="TagLibSharp">
+      <HintPath>..\..\..\Chill With You_Data\Managed\TagLibSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.ResourceManager">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.ResourceManager.dll</HintPath>
+    </Reference>
+    <Reference Include="DistantLands.Cozy.Runtime">
+      <HintPath>..\..\..\Chill With You_Data\Managed\DistantLands.Cozy.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.RenderPipelines.Core.Runtime">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.RenderPipelines.Core.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Cinemachine">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Cinemachine.dll</HintPath>
+    </Reference>
+    <Reference Include="MagicLightmapSwitcher">
+      <HintPath>..\..\..\Chill With You_Data\Managed\MagicLightmapSwitcher.dll</HintPath>
+    </Reference>
+    <Reference Include="OSA.Core">
+      <HintPath>..\..\..\Chill With You_Data\Managed\OSA.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Febucci.TextAnimator.Runtime">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Febucci.TextAnimator.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="GoogleMobileAds">
+      <HintPath>..\..\..\Chill With You_Data\Managed\GoogleMobileAds.dll</HintPath>
+    </Reference>
+    <Reference Include="GoogleMobileAds.Ump">
+      <HintPath>..\..\..\Chill With You_Data\Managed\GoogleMobileAds.Ump.dll</HintPath>
+    </Reference>
+    <Reference Include="GoogleMobileAds.Core">
+      <HintPath>..\..\..\Chill With You_Data\Managed\GoogleMobileAds.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Purchasing">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.Purchasing.dll</HintPath>
+    </Reference>
+    <Reference Include="Firebase.Analytics">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Firebase.Analytics.dll</HintPath>
+    </Reference>
+    <Reference Include="FastEnum">
+      <HintPath>..\..\..\Chill With You_Data\Managed\FastEnum.dll</HintPath>
+    </Reference>
+    <Reference Include="ZString">
+      <HintPath>..\..\..\Chill With You_Data\Managed\ZString.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+    </Reference>
+    <Reference Include="DOTween.Modules">
+      <HintPath>..\..\..\Chill With You_Data\Managed\DOTween.Modules.dll</HintPath>
+    </Reference>
+    <Reference Include="R3.Unity.TextMeshPro">
+      <HintPath>..\..\..\Chill With You_Data\Managed\R3.Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="ObservableCollections.R3">
+      <HintPath>..\..\..\Chill With You_Data\Managed\ObservableCollections.R3.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe">
+      <HintPath>..\..\..\Chill With You_Data\Managed\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+    </Reference>
+    <Reference Include="NativeFilePicker.Runtime">
+      <HintPath>..\..\..\Chill With You_Data\Managed\NativeFilePicker.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Unio">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unio.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Text.Encodings.Web">
+      <HintPath>..\..\..\Chill With You_Data\Managed\System.Text.Encodings.Web.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Localization">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.Localization.dll</HintPath>
+    </Reference>
+    <Reference Include="UniTask.Addressables">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UniTask.Addressables.dll</HintPath>
+    </Reference>
+    <Reference Include="UniTask.Linq">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UniTask.Linq.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestAudioModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.UnityWebRequestAudioModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CrashReportingModule">
+      <HintPath>..\..\..\Chill With You_Data\Managed\UnityEngine.CrashReportingModule.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Services.Core">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.Services.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Services.Core.Environments">
+      <HintPath>..\..\..\Chill With You_Data\Managed\Unity.Services.Core.Environments.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

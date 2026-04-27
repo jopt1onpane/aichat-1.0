@@ -1,0 +1,14 @@
+public enum GameStartDirectionScenarioType
+{
+	GameStart_First_CameraTouch,
+	GameStart_LessTowDays_CameraTouch,
+	GameStart_LessTowDays,
+	GameStart_LessHarfMonth_CameraTouch,
+	GameStart_GreaterHarfMonth_CameraTouch,
+	GameStart_GreaterMonth_CameraTouch,
+	GameStart_GreaterYear_AND_PlayOneHundred_CameraTouch,
+	GameStart_LessTowDays_CameraTouch_Morning,
+	GameStart_LessTowDays_CameraTouch_Noon,
+	GameStart_LessTowDays_CameraTouch_Evening,
+	GameStart_LessTowDays_CameraTouch_Night
+}
