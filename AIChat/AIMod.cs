@@ -10,6 +10,7 @@ using BepInEx.Configuration;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 using System.Diagnostics;
 using AIChat.Core;
 using AIChat.Services;
@@ -1389,52 +1390,149 @@ namespace ChillAIMod
         {
             try
             {
+                // Strategy: find the container by locating known game buttons first
+                Transform buttonContainer = null;
+                Transform referenceButton = null; // the lowest existing button (日记/Calendar)
+
+                // Step 1: Try known paths
                 string[] candidatePaths = new string[]
                 {
                     "Paremt/Canvas/UI/MostFrontArea/TopIcons",
                     "Parent/Canvas/UI/MostFrontArea/TopIcons",
                     "Paremt/Canvas/UI/MostFrontArea/RightIcons",
                 };
-
-                GameObject rightIcons = null;
                 foreach (string path in candidatePaths)
                 {
-                    rightIcons = GameObject.Find(path);
-                    if (rightIcons != null)
+                    GameObject found = GameObject.Find(path);
+                    if (found != null)
                     {
-                        Log.Info($"[UI] 通过路径找到容器: {path}");
+                        buttonContainer = found.transform;
+                        Log.Info($"[UI] 路径命中: {path}");
                         break;
                     }
                 }
 
-                if (rightIcons == null)
+                // Step 2: find by known button names (game's right side buttons)
+                if (buttonContainer == null)
                 {
-                    rightIcons = FindGameObjectByNameRecursive("TopIcons");
-                    if (rightIcons == null)
-                        rightIcons = FindGameObjectByNameRecursive("RightIcons");
+                    string[] knownButtonNames = new string[]
+                    {
+                        "IconCalendar_Button", "IconDiary_Button",
+                        "IconNote_Button", "IconTodo_Button",
+                        "IconHabitTracker_Button", "IconHabit_Button",
+                    };
+                    foreach (string btnName in knownButtonNames)
+                    {
+                        GameObject btn = FindGameObjectByNameAnywhere(btnName);
+                        if (btn != null && btn.transform.parent != null)
+                        {
+                            buttonContainer = btn.transform.parent;
+                            Log.Info($"[UI] 通过按钮 '{btnName}' 找到容器: {GetFullPath(buttonContainer)}");
+                            break;
+                        }
+                    }
                 }
 
-                if (rightIcons == null)
+                // Step 3: brute-force search - find any Button whose name contains known keywords
+                if (buttonContainer == null)
                 {
-                    Log.Warning("[UI] 无法找到按钮容器 TopIcons/RightIcons，尝试输出 UI 树...");
-                    DumpUITree();
+                    var allButtons = UnityEngine.Object.FindObjectsOfType<Button>();
+                    foreach (var btn in allButtons)
+                    {
+                        string n = btn.gameObject.name.ToLower();
+                        if (n.Contains("calendar") || n.Contains("diary") ||
+                            n.Contains("note") || n.Contains("todo") ||
+                            n.Contains("habit"))
+                        {
+                            if (btn.transform.parent != null)
+                            {
+                                buttonContainer = btn.transform.parent;
+                                Log.Info($"[UI] 通过 Button 组件 '{btn.gameObject.name}' 找到容器: {GetFullPath(buttonContainer)}");
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Step 4: last resort - search all transforms for container-like names
+                if (buttonContainer == null)
+                {
+                    string[] containerNames = new string[]
+                    {
+                        "TopIcons", "RightIcons", "IconButtons", "RightButtons", "SideIcons"
+                    };
+                    foreach (string name in containerNames)
+                    {
+                        GameObject found = FindGameObjectByNameAnywhere(name);
+                        if (found != null)
+                        {
+                            buttonContainer = found.transform;
+                            Log.Info($"[UI] 名称搜索命中: {name}");
+                            break;
+                        }
+                    }
+                }
+
+                if (buttonContainer == null)
+                {
+                    Log.Warning("[UI] 所有搜索策略均失败，输出 UI 树...");
+                    DumpUITree(5);
                     return;
                 }
 
-                _aiChatButton = new GameObject("IconAIChat_Button");
-                _aiChatButton.transform.SetParent(rightIcons.transform, false);
-                RectTransform rectTransform = _aiChatButton.AddComponent<RectTransform>();
-
+                // Find the lowest existing button (by Y position) to place AI button below it
+                float lowestY = float.MaxValue;
                 float buttonSize = 60f;
-                if (rightIcons.transform.childCount > 0)
+                float refX = 0f;
+                RectTransform lowestRect = null;
+
+                for (int i = 0; i < buttonContainer.childCount; i++)
                 {
-                    RectTransform firstButtonRect = rightIcons.transform.GetChild(0).GetComponent<RectTransform>();
-                    if (firstButtonRect != null)
+                    RectTransform childRect = buttonContainer.GetChild(i).GetComponent<RectTransform>();
+                    if (childRect == null) continue;
+                    if (buttonSize <= 0)
+                        buttonSize = Mathf.Max(childRect.sizeDelta.x, childRect.sizeDelta.y);
+                    if (childRect.anchoredPosition.y < lowestY)
                     {
-                        buttonSize = Mathf.Max(firstButtonRect.sizeDelta.x, firstButtonRect.sizeDelta.y);
+                        lowestY = childRect.anchoredPosition.y;
+                        lowestRect = childRect;
+                        refX = childRect.anchoredPosition.x;
                     }
                 }
+                if (buttonSize <= 0) buttonSize = 60f;
+
+                // Log all children for debugging
+                for (int i = 0; i < buttonContainer.childCount; i++)
+                {
+                    var c = buttonContainer.GetChild(i);
+                    var r = c.GetComponent<RectTransform>();
+                    string pos = r != null ? $"({r.anchoredPosition.x:F0},{r.anchoredPosition.y:F0})" : "no-rect";
+                    Log.Info($"[UI] 容器子节点[{i}]: {c.name} pos={pos}");
+                }
+
+                _aiChatButton = new GameObject("IconAIChat_Button");
+                _aiChatButton.transform.SetParent(buttonContainer, false);
+                RectTransform rectTransform = _aiChatButton.AddComponent<RectTransform>();
                 rectTransform.sizeDelta = new Vector2(buttonSize, buttonSize);
+
+                if (lowestRect != null)
+                {
+                    rectTransform.anchorMin = lowestRect.anchorMin;
+                    rectTransform.anchorMax = lowestRect.anchorMax;
+                    rectTransform.pivot = lowestRect.pivot;
+                    float spacing = 10f;
+                    rectTransform.anchoredPosition = new Vector2(
+                        refX,
+                        lowestY - (buttonSize + spacing)
+                    );
+                }
+                else
+                {
+                    rectTransform.anchorMin = new Vector2(1f, 1f);
+                    rectTransform.anchorMax = new Vector2(1f, 1f);
+                    rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                    rectTransform.anchoredPosition = Vector2.zero;
+                }
 
                 Image image = _aiChatButton.AddComponent<Image>();
                 try
@@ -1446,7 +1544,7 @@ namespace ChillAIMod
                 catch (Exception ex)
                 {
                     Log.Error($"加载内置图片失败: {ex}");
-                    image.color = Color.red;
+                    image.color = new Color(0.6f, 0.4f, 1f, 1f);
                 }
 
                 Button button = _aiChatButton.AddComponent<Button>();
@@ -1455,80 +1553,68 @@ namespace ChillAIMod
                     _showInputWindow = !_showInputWindow;
                 });
 
-                List<RectTransform> children = new List<RectTransform>();
-                for (int i = 0; i < rightIcons.transform.childCount; i++)
-                {
-                    RectTransform childRect = rightIcons.transform.GetChild(i).GetComponent<RectTransform>();
-                    if (childRect != null && childRect != rectTransform)
-                    {
-                        children.Add(childRect);
-                    }
-                }
-
-                children.Sort((a, b) => a.anchoredPosition.y.CompareTo(b.anchoredPosition.y));
-
-                if (children.Count > 0)
-                {
-                    RectTransform lowestButton = children[0];
-                    float spacing = 10f;
-                    rectTransform.anchoredPosition = new Vector2(
-                        lowestButton.anchoredPosition.x,
-                        lowestButton.anchoredPosition.y - (buttonSize + spacing)
-                    );
-                }
-                else
-                {
-                    rectTransform.anchoredPosition = Vector2.zero;
-                }
-
-                rectTransform.anchorMin = new Vector2(1f, 1f);
-                rectTransform.anchorMax = new Vector2(1f, 1f);
-                rectTransform.pivot = new Vector2(0.5f, 0.5f);
-
                 _aiChatButtonAdded = true;
-                Log.Info($"[UI] AI 按钮已添加 (容器子节点数: {rightIcons.transform.childCount})");
+                Log.Info($"[UI] AI 按钮已添加到 '{buttonContainer.name}'，位置=({rectTransform.anchoredPosition.x:F0},{rectTransform.anchoredPosition.y:F0})");
             }
             catch (Exception ex)
             {
-                Log.Error($"添加AI聊天按钮失败: {ex.Message}");
+                Log.Error($"添加AI聊天按钮失败: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
-        private static GameObject FindGameObjectByNameRecursive(string name)
+        private static GameObject FindGameObjectByNameAnywhere(string name)
         {
-            foreach (Canvas canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+            foreach (var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
             {
-                var result = FindChildRecursive(canvas.transform, name);
-                if (result != null) return result.gameObject;
+                Transform found = FindChildRecursive(root.transform, name);
+                if (found != null) return found.gameObject;
             }
             return null;
         }
 
         private static Transform FindChildRecursive(Transform parent, string name)
         {
+            if (parent.name == name) return parent;
             for (int i = 0; i < parent.childCount; i++)
             {
-                Transform child = parent.GetChild(i);
-                if (child.name == name) return child;
-                Transform found = FindChildRecursive(child, name);
+                Transform found = FindChildRecursive(parent.GetChild(i), name);
                 if (found != null) return found;
             }
             return null;
         }
 
-        private static void DumpUITree()
+        private static string GetFullPath(Transform t)
         {
-            foreach (Canvas canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+            string path = t.name;
+            Transform p = t.parent;
+            while (p != null)
             {
-                DumpTransform(canvas.transform, 0, 3);
+                path = p.name + "/" + path;
+                p = p.parent;
             }
+            return path;
+        }
+
+        private static void DumpUITree(int maxDepth = 4)
+        {
+            Log.Info("[UITree] === 开始 UI 树转储 ===");
+            foreach (var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
+            {
+                if (root.GetComponentInChildren<Canvas>() != null)
+                    DumpTransform(root.transform, 0, maxDepth);
+            }
+            Log.Info("[UITree] === UI 树转储结束 ===");
         }
 
         private static void DumpTransform(Transform t, int depth, int maxDepth)
         {
             if (depth > maxDepth) return;
             string indent = new string(' ', depth * 2);
-            Log.Info($"[UITree] {indent}{t.name} (active={t.gameObject.activeSelf})");
+            var rect = t.GetComponent<RectTransform>();
+            string extra = rect != null ? $" pos=({rect.anchoredPosition.x:F0},{rect.anchoredPosition.y:F0})" : "";
+            bool hasButton = t.GetComponent<Button>() != null;
+            string btnMark = hasButton ? " [BTN]" : "";
+            Log.Info($"[UITree] {indent}{t.name}{btnMark}{extra} (active={t.gameObject.activeSelf})");
             for (int i = 0; i < t.childCount; i++)
                 DumpTransform(t.GetChild(i), depth + 1, maxDepth);
         }
