@@ -128,8 +128,15 @@ namespace AIChat.Utils
 
             string jsonBody;
             string extraJson = requestContext.UseLocalOllama ? $@",""stream"": false" : "";
-            // 【深度思考参数】
-            extraJson += GetThinkParameterJson(requestContext.ThinkMode);
+            // Ollama + Default → 显式禁用思考模式（Qwen3 等模型默认开启思考，会大幅拖慢响应）
+            if (requestContext.UseLocalOllama && requestContext.ThinkMode == ThinkMode.Default)
+            {
+                extraJson += @",""think"": false";
+            }
+            else
+            {
+                extraJson += GetThinkParameterJson(requestContext.ThinkMode);
+            }
 
             if (requestContext.ModelName.Contains("gemma")) {
                 // 将 persona 作为背景信息放在 user 消息的最前面

@@ -27,6 +27,13 @@ namespace AIChat.Services
             float timeoutSeconds = 30f,
             bool audioPathCheck = false)
         {
+            // 防御性清理：从 Windows "复制为路径" 粘贴的字符串可能带双引号、尾随反斜杠或空白
+            if (!string.IsNullOrEmpty(refPath))
+            {
+                refPath = refPath.Trim().Trim('"', '\\', ' ', '\t', '\r', '\n');
+                logger.LogInfo($"[TTS] 清理后的参考音频路径: {refPath}");
+            }
+
             if (audioPathCheck && !File.Exists(refPath))
             {
                 string defaultPath = Path.Combine(BepInEx.Paths.PluginPath, "ChillAIMod", "Voice.wav");
