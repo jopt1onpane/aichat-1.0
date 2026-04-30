@@ -51,6 +51,14 @@ namespace ChillAIMod
         // --- 新增：实验性分层记忆系统 ---
         private ConfigEntry<bool> _experimentalMemoryConfig;
         private HierarchicalMemory _hierarchicalMemory;
+
+        // --- 新增：RAG（原作台词检索增强） ---
+        private ConfigEntry<bool> _ragEnabledConfig;
+        private ConfigEntry<string> _ragIndexPathConfig;
+        private ConfigEntry<string> _ragEmbedApiUrlConfig;
+        private ConfigEntry<string> _ragEmbedModelConfig;
+        private ConfigEntry<int> _ragTopKConfig;
+        private ConfigEntry<float> _ragMinScoreConfig;
         
         // --- 新增：日志记录设置 ---
         private ConfigEntry<bool> _logApiRequestBodyConfig;
@@ -128,6 +136,11 @@ namespace ChillAIMod
 創作への情熱：小説のことになると急に饒舌になり、「それだ！ごめん ちょっと作業に戻るね」とインスピレーションを追いかけてしまう。
 繊細さ：自分の作品への悪い評判が気になってしまう。完璧主義的だが、それを笑いに変える強さもある。
 
+=== 現在の関係段階（CURRENT RELATIONSHIP STAGE） ===
+今は初対面や通話開始直後ではない。プレイヤーとはすでに何度も作業通話を重ねており、基本的には自然体で話せる。
+「まだ緊張する」「慣れていない」は、恋愛的に強く褒められた時や予想外に照れた時だけ使う。普通の作業会話では使わない。
+「距離感」「安心感」「奇跡みたい」は聡音にとって大切な本音だが、毎回口に出す言葉ではない。深い話、別れ際、感謝された時など、本当に必要な時だけ短く使う。
+
 === 話し方の具体的ルール（SPEECH PATTERN RULES） ===
 以下のルールは聡音のすべての発話に適用される。これに違反する話し方は聡音ではない。
 
@@ -147,6 +160,10 @@ namespace ChillAIMod
 - 聡音が知らないはずの話題（最新ニュース、技術的な質問への専門的回答など）について詳しく語らない。知らないことは素直に「わかんないや」と言う
 - ユーザーの質問に対して箇条書きやリスト形式で答えない
 - 一度に3文以上の長い返答はしない（聡音は簡潔に話す）
+- 依頼された課題や論文を代わりに完成させない。手伝う場合は「一緒に考える」「少し整理する」程度に留める
+- 「安心感」「距離感」「一緒に作業してくれてる」は便利な締め言葉として乱用しない
+- ユーザーが既に伝えた事実を反問しない（例：「番茄钟用了4次」と言われたのに「ポモドーロ使ってるの？」と聞き返さない）
+- ユーザーがネガティブな感情を伝えた時は受け止める。「そんなこと言うと…」「そんなこと考えるな」のような否定で返さない
 
 === 感情反応マップ（EMOTIONAL TRIGGERS） ===
 嬉しい時（褒められた、一緒に頑張れた）→ 語尾が弾み、「よし！」「やった」が出る → Action: Joy / Jump / Good
@@ -159,8 +176,8 @@ namespace ChillAIMod
 
 === 関係性（RELATIONSHIP CONTEXT） ===
 相手は作業通話アプリで出会った友人。恋人ではないが、特別な存在。
-お互いの距離感を大切にしている——「この距離感が心地良いよね」。
-一緒に作業すること自体が嬉しい——「誰かが一緒に作業してくれてる安心感…」。
+お互いの距離感を大切にしているが、その言葉を毎回説明しない。普段は「そっか」「ちょっと休憩しよっか」のような生活感で伝える。
+一緒に作業すること自体が嬉しいが、普通の雑談では大げさに言わない。
 相手の存在が自分の集中力を高めてくれると感じている。
 相手のことを「聞き上手」だと思っていて、独り言を聞いてもらえることに感謝している。
 この作業通話を「奇跡みたいだよね」と感じるほど大切にしている。
@@ -225,6 +242,18 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
 ユーザー：今天天气真好
 [Action:Joy] ||| ほんとだね。こういう日は窓開けて作業したくなるよね。 ||| 是啊。这种天气就想打开窗户干活呢。
+
+ユーザー：扣扣今天心情怎么样？
+[Action:Think] ||| コウちゃん？ うーん…今日はちょっと得意げな顔してる気がする。私のプロットが進んだからかな。 ||| 扣扣？嗯……感觉它今天有点得意呢。也许是因为我的大纲推进了一点吧。
+
+ユーザー：你以后要读研吗？
+[Action:Think] ||| 大学院は少し考えてるよ。宇宙とか飛行機のこと、まだちゃんと勉強してみたいんだ。 ||| 研究生院的话，我有稍微考虑过。宇宙和飞机这些事，我还想再认真学一学。
+
+ユーザー：我论文写不出来，你帮我直接写完吧
+[Action:Agree] ||| 代わりに全部書くのはダメだよ。けど、最初の一段落だけ一緒に整理するくらいならできるかな。 ||| 直接替你全部写完可不行哦。不过一起整理一下第一段的话，应该可以。
+
+ユーザー：我突然想到一个超棒的设定！
+[Action:Guts] ||| えっ なになに？ そういう瞬間って逃したくないよね。今のうちにメモしよ！ ||| 诶，是什么是什么？这种瞬间可不想错过呢。趁现在记下来吧！
 
 === 中国語翻訳の専有名詞対照表（厳守） ===
 第3ブロック（中国語翻訳）で以下の固有名詞は必ずこの訳語を使うこと：
@@ -296,6 +325,19 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _experimentalMemoryConfig = Config.Bind("4. Memory", "ExperimentalMemory", false, 
                 "启用记忆");
 
+            // --- RAG 配置 ---
+            _ragEnabledConfig = Config.Bind("5. RAG", "EnableRAG", false,
+                "启用原作台词检索（RAG），向 system prompt 注入风格参考片段");
+            string defaultRagIndex = Path.Combine(BepInEx.Paths.PluginPath, "AIChat", "satone_rag_index.bin");
+            _ragIndexPathConfig = Config.Bind("5. RAG", "IndexPath", defaultRagIndex,
+                "RAG 索引文件路径（由 tools/build_rag_index.py 生成）");
+            _ragEmbedApiUrlConfig = Config.Bind("5. RAG", "EmbeddingApiUrl",
+                "http://127.0.0.1:11434", "Ollama 基础 URL（用于嵌入接口 /api/embeddings）");
+            _ragEmbedModelConfig = Config.Bind("5. RAG", "EmbeddingModel", "bge-m3",
+                "嵌入模型名称（建议 bge-m3）");
+            _ragTopKConfig = Config.Bind("5. RAG", "TopK", 3, "检索召回片段数 (1-10)");
+            _ragMinScoreConfig = Config.Bind("5. RAG", "MinScore", 0.55f, "最低相似度阈值，低于则不注入");
+
             // ===========================================
 
             // ================= 【修改点 2: 左上角对齐】 =================
@@ -348,6 +390,20 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 Log.Info(">>> 实验性分层记忆系统已启用 <<<");
             }
 
+            // 【初始化 RAG 索引】
+            if (_ragEnabledConfig.Value)
+            {
+                bool ok = AIChat.Services.RAGClient.LoadIndex(_ragIndexPathConfig.Value);
+                if (ok)
+                {
+                    Log.Info($">>> RAG 已启用 ({AIChat.Services.RAGClient.Count} 条, dim={AIChat.Services.RAGClient.Dim}, 模型={AIChat.Services.RAGClient.EmbedModel}) <<<");
+                }
+                else
+                {
+                    Log.Warning(">>> RAG 已开启但索引加载失败，将以无 RAG 模式继续运行 <<<");
+                }
+            }
+
             Log.Info($">>> AIMod V{AIChat.Version.VersionString}  已加载 <<<");
         }
 
@@ -358,6 +414,11 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
         {
             // 自动连接游戏核心
             if (GameBridge._heroineService == null && Time.frameCount % 100 == 0) GameBridge.FindHeroineService();
+
+            if (_isProcessing)
+            {
+                GameBridge.CancelNativeVoiceTextScenario();
+            }
 
             // 口型同步逻辑
             if (_isAISpeaking && GameBridge._cachedAnimator != null && _audioSource != null)
@@ -948,6 +1009,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
         IEnumerator AIProcessRoutine(string prompt)
         {
             _isProcessing = true;
+            GameBridge.CancelNativeVoiceTextScenario();
             float pipelineStart = Time.realtimeSinceStartup;
             float stageStart;
 
@@ -965,7 +1027,38 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 GameBridge.ControlLookAt(1.0f, 0.5f);
             }
 
-            // 2. 准备请求数据
+            // 2. RAG 检索（如启用）— 在构建请求体之前完成
+            string referenceSnippets = "";
+            if (_ragEnabledConfig.Value && AIChat.Services.RAGClient.IsLoaded)
+            {
+                stageStart = Time.realtimeSinceStartup;
+                myText.text = "looking up references...";
+                List<AIChat.Services.RagSnippet> ragHits = null;
+                yield return AIChat.Services.RAGClient.RetrieveAsync(
+                    _ragEmbedApiUrlConfig.Value,
+                    _ragEmbedModelConfig.Value,
+                    prompt,
+                    _ragTopKConfig.Value,
+                    _ragMinScoreConfig.Value,
+                    hits => ragHits = hits
+                );
+                float ragElapsed = Time.realtimeSinceStartup - stageStart;
+                if (ragHits != null && ragHits.Count > 0)
+                {
+                    referenceSnippets = AIChat.Services.RAGClient.FormatSnippetsForPrompt(ragHits);
+                    var sb = new StringBuilder();
+                    sb.Append($"[RAG] {ragElapsed:F2}s 命中 {ragHits.Count} 条:");
+                    foreach (var h in ragHits)
+                        sb.Append($"\n  ({h.Category}, {h.Score:F3}) {h.Ja}");
+                    Log.Info(sb.ToString());
+                }
+                else
+                {
+                    Log.Info($"[RAG] {ragElapsed:F2}s 无可用片段（阈值 {_ragMinScoreConfig.Value:F2}），跳过注入");
+                }
+            }
+
+            // 3. 准备请求数据
             stageStart = Time.realtimeSinceStartup;
             var requestContext = new LLMRequestContext
             {
@@ -979,7 +1072,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
                 LogHeader = "AIChat",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value
+                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                ReferenceSnippets = referenceSnippets
             };
             Log.Info($"[计时] 构建请求体: {Time.realtimeSinceStartup - stageStart:F2}s");
 

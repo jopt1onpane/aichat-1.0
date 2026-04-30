@@ -22,6 +22,10 @@ namespace AIChat.Unity
         private static MonoBehaviour _heroineAI;
         private static FieldInfo _actionStateMachineField;
         private static PropertyInfo _currentStateProperty;
+        private static object _facilityVoiceTextScenario;
+        private static MethodInfo _cancelVoiceTextScenarioMethod;
+        private static int _lastCancelVoiceFrame;
+        private static int _lastVoiceScenarioSearchFrame;
 
         private static readonly HashSet<string> _unsafeStates = new HashSet<string>
         {
@@ -54,6 +58,32 @@ namespace AIChat.Unity
                         Log.Info("[GameBridge] HeroineAI 状态机字段已缓存");
                     }
                 }
+                else if (typeName == "Bulbul.RoomGameManager")
+                {
+                    CacheFacilityVoiceTextScenario(comp);
+                }
+            }
+        }
+
+        private static void CacheFacilityVoiceTextScenario(MonoBehaviour roomGameManager)
+        {
+            try
+            {
+                FieldInfo field = roomGameManager.GetType().GetField("_facilityVoiceTextScenario", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field == null) return;
+
+                _facilityVoiceTextScenario = field.GetValue(roomGameManager);
+                if (_facilityVoiceTextScenario == null) return;
+
+                _cancelVoiceTextScenarioMethod = _facilityVoiceTextScenario.GetType().GetMethod("CancelReaction", BindingFlags.Public | BindingFlags.Instance);
+                if (_cancelVoiceTextScenarioMethod != null)
+                {
+                    Log.Info("[GameBridge] FacilityVoiceTextScenario 已缓存，可在 AI 说话时抑制原生语音");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] 缓存 FacilityVoiceTextScenario 失败: {ex.Message}");
             }
         }
 
@@ -102,6 +132,33 @@ namespace AIChat.Unity
             {
                 Log.Warning($"[GameBridge] 读取状态机失败: {ex.Message}");
                 return true;
+            }
+        }
+
+        public static void CancelNativeVoiceTextScenario()
+        {
+            if ((_facilityVoiceTextScenario == null || _cancelVoiceTextScenarioMethod == null) && Time.frameCount - _lastVoiceScenarioSearchFrame > 120)
+            {
+                _lastVoiceScenarioSearchFrame = Time.frameCount;
+                FindHeroineService();
+            }
+
+            if (_facilityVoiceTextScenario == null || _cancelVoiceTextScenarioMethod == null) return;
+
+            // 多个系统会通过 FacilityVoiceTextScenario 排队播放原生短语音。
+            // AI 正在回复时持续清理这个排队状态，避免和 TTS 撞音。
+            try
+            {
+                _cancelVoiceTextScenarioMethod.Invoke(_facilityVoiceTextScenario, null);
+                _lastCancelVoiceFrame = Time.frameCount;
+            }
+            catch (Exception ex)
+            {
+                if (Time.frameCount - _lastCancelVoiceFrame > 300)
+                {
+                    Log.Warning($"[GameBridge] 取消原生语音场景失败: {ex.Message}");
+                    _lastCancelVoiceFrame = Time.frameCount;
+                }
             }
         }
 

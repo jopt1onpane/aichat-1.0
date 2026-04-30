@@ -26,6 +26,7 @@ namespace AIChat.Utils
         public ThinkMode ThinkMode;
         public HierarchicalMemory HierarchicalMemory;
         public string LogHeader;
+        public string ReferenceSnippets;  // RAG 注入：会附加到 system prompt 末尾，空字符串表示不启用
 
         public LLMRequestContext(
             string apiUrl = "",
@@ -38,7 +39,8 @@ namespace AIChat.Utils
             ThinkMode thinkMode = ThinkMode.Default,
             HierarchicalMemory hierarchicalMemory = null,
             string logHeader = "LLMRequest",
-            bool fixApiPathForThinkMode = false
+            bool fixApiPathForThinkMode = false,
+            string referenceSnippets = ""
         )
         {
             ApiUrl = apiUrl;
@@ -52,6 +54,7 @@ namespace AIChat.Utils
             HierarchicalMemory = hierarchicalMemory;
             LogHeader = logHeader;
             FixApiPathForThinkMode = fixApiPathForThinkMode;
+            ReferenceSnippets = referenceSnippets;
         }
     }
 
@@ -126,6 +129,13 @@ namespace AIChat.Utils
             // 【集成分层记忆】获取带记忆上下文的提示词
             string userPromptWithMemory = GetContextWithMemory(requestContext.HierarchicalMemory, requestContext.UserPrompt);
 
+            // 【集成 RAG】将检索到的参考语境追加到 system prompt 末尾
+            string finalSystemPrompt = requestContext.SystemPrompt;
+            if (!string.IsNullOrEmpty(requestContext.ReferenceSnippets))
+            {
+                finalSystemPrompt = finalSystemPrompt + "\n" + requestContext.ReferenceSnippets;
+            }
+
             string jsonBody;
             string extraJson = requestContext.UseLocalOllama ? $@",""stream"": false" : "";
             // Ollama + Default → 显式禁用思考模式（Qwen3 等模型默认开启思考，会大幅拖慢响应）
@@ -140,19 +150,19 @@ namespace AIChat.Utils
 
             if (requestContext.ModelName.Contains("gemma")) {
                 // 将 persona 作为背景信息放在 user 消息的最前面
-                string finalPrompt = $"[System Instruction]\n{requestContext.SystemPrompt}\n\n[User Message]\n{userPromptWithMemory}";
+                string finalPrompt = $"[System Instruction]\n{finalSystemPrompt}\n\n[User Message]\n{userPromptWithMemory}";
                 jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(finalPrompt)}"" }} ]{extraJson} }}";
             } else {
                 // Gemini 或 Ollama (如果是 Llama3 等) 通常支持 system role
-                jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ]{extraJson} }}";
+                jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(finalSystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ]{extraJson} }}";
             }
 
-            Log.Info($"[记忆系统] 启用状态: {requestContext.HierarchicalMemory != null}");
+            Log.Info($"[记忆系统] 启用状态: {requestContext.HierarchicalMemory != null}; RAG 段落字节数: {(requestContext.ReferenceSnippets ?? string.Empty).Length}");
             // 【日志】打印完整的请求体（如果启用）
             if (requestContext.LogApiRequestBody)
             {
                 // 【调试日志】显示完整的请求内容
-                Log.Info($"[发送给LLM的完整内容]\n========================================\n[System Prompt]\n{requestContext.SystemPrompt}\n\n[User Content]\n{userPromptWithMemory}\n========================================");
+                Log.Info($"[发送给LLM的完整内容]\n========================================\n[System Prompt]\n{finalSystemPrompt}\n\n[User Content]\n{userPromptWithMemory}\n========================================");
                 Log.Info($"[API请求] 完整请求体:\n{jsonBody}");
             }
 
