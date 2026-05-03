@@ -172,6 +172,29 @@ namespace AIChat.Services
         /// <param name="minScore">阈值，低于则丢弃</param>
         /// <param name="onComplete">完成回调，参数为命中片段（可能为空）</param>
         /// <param name="timeoutSeconds">嵌入接口超时</param>
+        /// <summary>
+        /// 启动时调用一次，预热 bge-m3 让其常驻显存，避免首次查询的 5-10s 冷启动。
+        /// 失败也无所谓（用户可能没装/没启 Ollama），只是少一次预热而已。
+        /// </summary>
+        public static IEnumerator WarmUpAsync(string ollamaBaseUrl, string embedModel, float timeoutSeconds = 30f)
+        {
+            float t0 = Time.realtimeSinceStartup;
+            float[] vec = null;
+            yield return EmbedAsync(
+                ollamaBaseUrl,
+                embedModel,
+                "warmup",
+                v => vec = v,
+                err => Log.Warning($"[RAG] 预热失败（不影响后续）: {err}"),
+                timeoutSeconds
+            );
+            float elapsed = Time.realtimeSinceStartup - t0;
+            if (vec != null)
+                Log.Info($"[RAG] 嵌入模型预热成功 ({elapsed:F2}s, dim={vec.Length})，bge-m3 已常驻显存");
+            else
+                Log.Info($"[RAG] 嵌入模型预热未完成 ({elapsed:F2}s)，首次查询可能仍偏慢");
+        }
+
         public static IEnumerator RetrieveAsync(
             string ollamaBaseUrl,
             string embedModel,
@@ -228,7 +251,8 @@ namespace AIChat.Services
             float timeoutSeconds)
         {
             string url = ollamaBaseUrl.TrimEnd('/') + "/api/embeddings";
-            string body = "{\"model\":\"" + JsonEscape(embedModel) + "\",\"prompt\":\"" + JsonEscape(text) + "\"}";
+            // keep_alive=30m 让 bge-m3 常驻显存，避免每次 5-10s 冷启动
+            string body = "{\"model\":\"" + JsonEscape(embedModel) + "\",\"prompt\":\"" + JsonEscape(text) + "\",\"keep_alive\":\"30m\"}";
             byte[] payload = Encoding.UTF8.GetBytes(body);
 
             using (UnityWebRequest req = new UnityWebRequest(url, "POST"))
@@ -532,6 +556,10 @@ namespace AIChat.Services
             sb.AppendLine("2. ユーザーが既に述べた事実（例：「もう4回やった」「コーヒーを淹れに行く」など）を反問しない。");
             sb.AppendLine("3. 参考台詞中の「設計図」「ネガティブ」など特殊な単語は、ユーザーの話題と無関係なら使わない。");
             sb.AppendLine("4. 参考台詞は3つ以下しか提示されないが、すべて使う必要はない。1つも合わなければ無視してよい。");
+            sb.AppendLine("【カテゴリの意味】");
+            sb.AppendLine("- (selftalk)(clickheroine) は聡音が一人でつぶやく独り言。**ユーザーへの返答ではない**。返答テンプレとして使うと文脈が破綻する。");
+            sb.AppendLine("- (other) は他のキャラの台詞や雑多な行。**そのまま自分の台詞にしない**。");
+            sb.AppendLine("- (main_general) は本編の聡音の発言。語気だけ参考にする。");
             sb.AppendLine("--- 参考台詞 ---");
             for (int i = 0; i < snippets.Count; i++)
             {

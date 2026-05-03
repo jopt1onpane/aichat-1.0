@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using UnityEngine;
 using ChillAIMod;
 using AIChat.Core;
+using AIChat.Services;
 
 namespace AIChat.Utils
 {
@@ -129,8 +130,33 @@ namespace AIChat.Utils
             // 【集成分层记忆】获取带记忆上下文的提示词
             string userPromptWithMemory = GetContextWithMemory(requestContext.HierarchicalMemory, requestContext.UserPrompt);
 
-            // 【集成 RAG】将检索到的参考语境追加到 system prompt 末尾
+            // 【实时上下文注入】用游戏当前的真实状态（番茄钟 / 活动 / 时间）替换 prompt 中的 {{LIVE_CONTEXT}} 占位符
             string finalSystemPrompt = requestContext.SystemPrompt;
+            string liveContext = string.Empty;
+            try { liveContext = LiveContextProvider.BuildContextSnippet(); }
+            catch (Exception ex) { Log.Warning($"[LiveContext] 构建失败: {ex.Message}"); }
+
+            if (finalSystemPrompt.Contains("{{LIVE_CONTEXT}}"))
+            {
+                finalSystemPrompt = finalSystemPrompt.Replace("{{LIVE_CONTEXT}}", liveContext ?? string.Empty);
+            }
+            else if (!string.IsNullOrEmpty(liveContext))
+            {
+                // 兼容自定义 prompt 没有占位符的情况：直接附加到末尾
+                finalSystemPrompt = finalSystemPrompt + "\n" + liveContext;
+            }
+
+            // 不依赖 LogApiRequestBody，明确记录 LiveContext 是否注入了什么内容
+            if (!string.IsNullOrEmpty(liveContext))
+            {
+                Log.Info("[LiveContext] 注入内容如下：\n" + liveContext.TrimEnd());
+            }
+            else
+            {
+                Log.Info("[LiveContext] 本次未生成任何实时上下文（Game/Pomodoro 未连接？）");
+            }
+
+            // 【集成 RAG】将检索到的参考语境追加到 system prompt 末尾
             if (!string.IsNullOrEmpty(requestContext.ReferenceSnippets))
             {
                 finalSystemPrompt = finalSystemPrompt + "\n" + requestContext.ReferenceSnippets;
@@ -138,6 +164,12 @@ namespace AIChat.Utils
 
             string jsonBody;
             string extraJson = requestContext.UseLocalOllama ? $@",""stream"": false" : "";
+            if (requestContext.UseLocalOllama)
+            {
+                // Ollama 原生 /api/chat 支持 keep_alive；OpenAI 兼容路径通常会忽略未知字段。
+                // 这里保持模型常驻，减少多轮对话时 Qwen 重新加载导致的 10s+ 抖动。
+                extraJson += @",""keep_alive"": ""30m""";
+            }
             // Ollama + Default → 显式禁用思考模式（Qwen3 等模型默认开启思考，会大幅拖慢响应）
             if (requestContext.UseLocalOllama && requestContext.ThinkMode == ThinkMode.Default)
             {
