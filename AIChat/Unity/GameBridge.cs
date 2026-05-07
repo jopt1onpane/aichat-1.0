@@ -15,6 +15,17 @@ namespace AIChat.Unity
         public static MonoBehaviour _heroineService;
         public static Animator _cachedAnimator;
 
+        // 全部反射缓存就绪时为 true（_heroineService、_heroineAI、_pomodoroService、_facilityClickHeroine、_roomGameManager 都拿到）
+        public static bool IsCacheComplete()
+        {
+            return _heroineService != null
+                && _heroineAI != null
+                && _pomodoroService != null
+                && _facilityClickHeroine != null
+                && _roomGameManager != null
+                && _pomodoroIsTimerRunningMethod != null;
+        }
+
         public static MethodInfo _changeAnimSmoothMethod;
         public static MethodInfo _lookInitMethod;
         public static MethodInfo _lookAtMethod;
@@ -41,6 +52,7 @@ namespace AIChat.Unity
         private static object _facilityClickHeroine;
         private static MethodInfo _reactionReadyMethod;
         private static object _reactionTypeClick; // ReactionType.Click 的枚举值
+        private static FieldInfo _clickHeroineMainStateField; // MainState: Idle=0, ReadyReaction, PlayingReaction, EndPlayReaction
         private static MonoBehaviour _roomGameManager;
         private static MethodInfo _playHeroineTouchReactionMethod;
 
@@ -49,13 +61,16 @@ namespace AIChat.Unity
             "ScenarioState", "SleepState", "StandUpState", "SitDownState", "WalkState"
         };
 
+        /// <summary>
+        /// 扫描场景，把还没缓存的反射对象一次性补齐。即使 HeroineService 已经在了，也会继续找 HeroineAI / PomodoroService / FacilityClickHeroine。
+        /// </summary>
         public static void FindHeroineService()
         {
             var allComponents = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
             foreach (var comp in allComponents)
             {
                 string typeName = comp.GetType().FullName;
-                if (typeName == "Bulbul.HeroineService")
+                if (typeName == "Bulbul.HeroineService" && _heroineService == null)
                 {
                     _heroineService = comp;
                     _cachedAnimator = comp.GetComponent<Animator>();
@@ -67,7 +82,7 @@ namespace AIChat.Unity
 
                     if (_changeAnimSmoothMethod != null) Log.Warning($"✅ 核心连接成功: {comp.gameObject.name}");
                 }
-                else if (typeName == "Bulbul.HeroineAI")
+                else if (typeName == "Bulbul.HeroineAI" && _heroineAI == null)
                 {
                     _heroineAI = comp;
                     _actionStateMachineField = comp.GetType().GetField("_actionStateMachine", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -75,18 +90,23 @@ namespace AIChat.Unity
                     {
                         Log.Info("[GameBridge] HeroineAI 状态机字段已缓存");
                     }
-                    CachePomodoroServiceFromHeroineAI(comp);
                 }
                 else if (typeName == "Bulbul.RoomGameManager")
                 {
-                    CacheFacilityVoiceTextScenario(comp);
-                    CacheFacilityClickHeroine(comp);
-                    CacheRoomGameManagerForTouchReaction(comp);
+                    if (_facilityVoiceTextScenario == null) CacheFacilityVoiceTextScenario(comp);
+                    if (_facilityClickHeroine == null) CacheFacilityClickHeroine(comp);
+                    if (_roomGameManager == null) CacheRoomGameManagerForTouchReaction(comp);
                 }
                 else if (typeName == "Bulbul.FacilityClickHeroine" && _facilityClickHeroine == null)
                 {
                     CacheFacilityClickHeroineFromInstance(comp);
                 }
+            }
+
+            // PomodoroService 通常在 HeroineAI 之后由 VContainer 注入。每次扫描都尝试一次，直到拿到为止。
+            if (_heroineAI != null && _pomodoroService == null)
+            {
+                CachePomodoroServiceFromHeroineAI(_heroineAI);
             }
         }
 
@@ -142,6 +162,10 @@ namespace AIChat.Unity
                 }
                 if (_reactionTypeClick == null) { Log.Warning("[GameBridge] ReactionType.Click 枚举值未拿到"); return; }
 
+                _clickHeroineMainStateField = t.GetField("_mainState", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (_clickHeroineMainStateField == null)
+                    Log.Warning("[GameBridge] FacilityClickHeroine._mainState 字段未找到（无法用 busy 门控 mod）");
+
                 Log.Info("[GameBridge] FacilityClickHeroine 已缓存（番茄钟工作中走原生反应）");
             }
             catch (Exception ex)
@@ -173,6 +197,23 @@ namespace AIChat.Unity
         /// 与游戏内「点击女主 → Idle 里 PlayHeroineTouchReaction」相同：先 ReactionReady(Click)，再立刻 PlayHeroineTouchReaction，
         /// 这样才会根据 PomodoroTalkController.IsCurrentWorking 选中 HeroineClickWork 等专注短句。
         /// </summary>
+        /// <summary>
+        /// 原生「点击女主」短反应是否占线（含独白 HeroineSelf 的 ReactionReady 流程）。
+        /// _mainState != Idle 时不应再启 mod 全流程，避免双层字幕与动画抢状态。
+        /// </summary>
+        public static bool IsNativeClickHeroineBusy()
+        {
+            try
+            {
+                if (_facilityClickHeroine == null || _clickHeroineMainStateField == null) return false;
+                object st = _clickHeroineMainStateField.GetValue(_facilityClickHeroine);
+                if (st == null) return false;
+                int ord = Convert.ToInt32(st);
+                return ord != 0; // 非 Idle
+            }
+            catch { return false; }
+        }
+
         public static bool TriggerNativeFocusTouchReaction()
         {
             if (_facilityClickHeroine == null || _reactionReadyMethod == null || _reactionTypeClick == null)
@@ -362,6 +403,12 @@ namespace AIChat.Unity
         /// </summary>
         public static bool IsPomodoroTimerRunning()
         {
+            // 关键路径：缓存还没就绪时强制重扫一次，避免「番茄钟运行中 mod 仍接管」的并行 bug
+            if (_pomodoroService == null || _pomodoroIsTimerRunningMethod == null)
+            {
+                EnsureCachesReady("IsPomodoroTimerRunning");
+            }
+
             try
             {
                 if (_pomodoroService != null && _pomodoroIsTimerRunningMethod != null)
@@ -370,10 +417,25 @@ namespace AIChat.Unity
                     return r is bool b && b;
                 }
             }
-            catch { /* ignore */ }
-            // 反射未就绪时退回 CurrentPomodoroType（修复拆箱后应可靠）
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] IsTimerRunning 反射调用失败: {ex.Message}");
+            }
+            // 反射仍不可用时回退到 CurrentPomodoroType
             var snap = GetPomodoroSnapshot();
             return snap.valid;
+        }
+
+        private static int _lastEnsureCachesFrame = -10000;
+        /// <summary>关键路径触发：缓存未齐全时强制重扫，最快每 30 帧一次。</summary>
+        public static void EnsureCachesReady(string reason)
+        {
+            if (IsCacheComplete()) return;
+            if (Time.frameCount - _lastEnsureCachesFrame < 30) return;
+            _lastEnsureCachesFrame = Time.frameCount;
+            Log.Info($"[GameBridge] EnsureCachesReady({reason}): heroineService={_heroineService != null}, heroineAI={_heroineAI != null}, pomodoroService={_pomodoroService != null}, facilityClickHeroine={_facilityClickHeroine != null}, roomGameManager={_roomGameManager != null}");
+            FindHeroineService();
+            Log.Info($"[GameBridge] EnsureCachesReady({reason}) 完成: complete={IsCacheComplete()}, pomoTimerMethod={_pomodoroIsTimerRunningMethod != null}");
         }
 
         private static void CacheFacilityVoiceTextScenario(MonoBehaviour roomGameManager)

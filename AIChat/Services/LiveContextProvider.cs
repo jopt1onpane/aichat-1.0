@@ -7,10 +7,11 @@ namespace AIChat.Services
     /// <summary>
     /// 把游戏侧"现在的真实状态"组装成日语 prompt section，
     /// 让聪音不再凭空捏造"最近在干什么"。
-    /// 核心三要素：
-    ///   1) 现实时刻段（早晨 / 中午 / 傍晚 / 深夜）
-    ///   2) 当前活动（PC作业 / 看书 / 喝茶休憩 / 听音乐 等）
-    ///   3) 番茄钟阶段（工作中 第N循环 余M分钟 / 休憩中 / 未启动）
+    /// 注入する情報：
+    ///   1) 現実時刻と時間帯（朝 / 昼 / 夕方 / 夜）
+    ///   2) 当前活動（PC作業 / 看書 / 喝茶休憩 / 听音乐 等）
+    ///   3) ポモドーロ阶段（工作中 第N循環 余M分鐘 / 休憩中 / 未启动）
+    ///   4) 通話開始前の今日の出来事メモ（DailyStoryGenerator が起動時に生成した素材）
     /// </summary>
     public static class LiveContextProvider
     {
@@ -26,9 +27,10 @@ namespace AIChat.Services
             string clock = DateTime.Now.ToString("HH:mm");
             string activity = GameBridge.GetCurrentActivityJa();
             var pomo = GameBridge.GetPomodoroSnapshot();
+            string dailyStory = DailyStoryGenerator.BuildSnippetForPrompt();
 
-            // 任何一个有效就值得注入
-            if (string.IsNullOrEmpty(activity) && !pomo.valid && string.IsNullOrEmpty(timeOfDay))
+            // すべて空なら何も注入しない
+            if (string.IsNullOrEmpty(activity) && !pomo.valid && string.IsNullOrEmpty(timeOfDay) && string.IsNullOrEmpty(dailyStory))
             {
                 return string.Empty;
             }
@@ -68,13 +70,29 @@ namespace AIChat.Services
                 sb.AppendLine("- ポモドーロ：今は走らせていない");
             }
 
+            // 通話開始前に LLM が事前生成した「今日の小さな出来事」を素材として注入する。
+            // これは話題の押し付けではなく、聞かれた時 / 自然な流れの時に "思い出して語る" ための素材庫。
+            if (!string.IsNullOrEmpty(dailyStory))
+            {
+                sb.Append(dailyStory);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("【今日の出来事メモの使い方（厳守）】");
+            sb.AppendLine("- 上記「今日の出来事メモ」は **素材庫**であって、話題リストではない。話の流れと関係なければ触れない。");
+            sb.AppendLine("- 「今日何があった？」「最近どう？」「何か面白いことあった？」と直接聞かれた時、または会話が自然に");
+            sb.AppendLine("  自分の生活共有に流れ着いた時にだけ、メモから 1 件を選んで思い出として自然に語る。");
+            sb.AppendLine("- 1 ターンに使うのは **最大 1 件**。2 件まとめて披露しない。列挙しない。");
+            sb.AppendLine("- 見出し（「通話開始前の今日」「今日の出来事メモ」など）や中点「· 」をそのまま読み上げない。**復唱厳禁**。");
+            sb.AppendLine("- メモが空 / 関連が薄い場合は、事実を作らず「うーん…今日は特に変わったことはなかったかも。普通に作業してた感じ」と");
+            sb.AppendLine("  素直に答えてから相手に話を振る（「君の方は？」「何か面白いことあった？」）。");
+            sb.AppendLine("- 「ちょっと話せないな」「思い出せない」「秘密」のような はぐらかし／拒絶は禁止（聞いてない感が出る）。");
             sb.AppendLine();
             return sb.ToString();
         }
 
         private static string GetTimeOfDayJa(int hour)
         {
-            // ゲーム本体の TimeOfDayProvider と同じ閾値
             if (hour > 5 && hour < 11) return "朝";
             if (hour >= 11 && hour < 17) return "昼";
             if (hour >= 17 && hour < 20) return "夕方";

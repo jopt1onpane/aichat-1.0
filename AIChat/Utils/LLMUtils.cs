@@ -77,41 +77,132 @@ namespace AIChat.Utils
 
     public static class LLMUtils
     {
+        /// <summary>
+        /// 解析 [Tag] ||| 日语 ||| 简体 三栏格式。会剥离常见推理/思维链标签，且不再用单字符 "|" 拆分（避免正文里的竖线误伤）。
+        /// </summary>
         public static LLMStandardResponse ParseStandardResponse(string response)
         {
-            LLMStandardResponse ret = new LLMStandardResponse(false, "Think", "", response);
+            string raw = response ?? "";
+            LLMStandardResponse ret = new LLMStandardResponse(false, "Think", "", raw);
 
-            string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
-            if (parts.Length < 3)
+            if (string.IsNullOrWhiteSpace(raw))
             {
-                parts = response.Split(new string[] { "|" }, StringSplitOptions.None);
+                ret.SubtitleText = "";
+                Log.Warning("[格式错误] AI 回复为空");
+                return ret;
             }
 
-            if (parts.Length >= 3)
+            string cleaned = StripReasoningBlocks(raw.Trim());
+
+            string[] parts = cleaned.Split(new[] { "|||" }, StringSplitOptions.None);
+            bool assigned = TryAssignTriple(parts, ref ret);
+
+            if (!assigned)
             {
-                string tagPart = parts[0].Trim();
-                ret.VoiceText = parts[1].Trim();
-                ret.SubtitleText = parts[2].Trim();
-
-                // New format: [Action:TagName] or legacy [TagName]
-                var actionMatch = Regex.Match(tagPart, @"\[Action:(\w+)\]");
-                if (actionMatch.Success)
+                Match tail = Regex.Match(cleaned, @"(\[[^\]]+\])\s*\|\|\|\s*(.*?)\s*\|\|\|\s*(.*)\s*$", RegexOptions.Singleline);
+                if (tail.Success)
                 {
-                    ret.EmotionTag = actionMatch.Groups[1].Value;
+                    AssignTagFromPart(ref ret, tail.Groups[1].Value.Trim());
+                    ret.VoiceText = tail.Groups[2].Value.Trim();
+                    ret.SubtitleText = tail.Groups[3].Value.Trim();
+                    assigned = !string.IsNullOrEmpty(ret.VoiceText) || !string.IsNullOrEmpty(ret.SubtitleText);
                 }
-                else
-                {
-                    ret.EmotionTag = tagPart.Replace("[", "").Replace("]", "").Trim();
-                    // Map legacy emotion names to new action tags
-                    ret.EmotionTag = MapLegacyTag(ret.EmotionTag);
-                }
+            }
 
+            if (!assigned)
+            {
+                Match lastGood = null;
+                foreach (Match m in Regex.Matches(cleaned, @"(\[[^\]]+\])\s*\|\|\|\s*(.*?)\s*\|\|\|\s*(.*)", RegexOptions.Singleline))
+                {
+                    string v = m.Groups[2].Value.Trim();
+                    string s = m.Groups[3].Value.Trim();
+                    if (v.Length + s.Length > 0)
+                        lastGood = m;
+                }
+                if (lastGood != null)
+                {
+                    AssignTagFromPart(ref ret, lastGood.Groups[1].Value.Trim());
+                    ret.VoiceText = lastGood.Groups[2].Value.Trim();
+                    ret.SubtitleText = lastGood.Groups[3].Value.Trim();
+                    assigned = true;
+                }
+            }
+
+            if (assigned && string.IsNullOrEmpty(ret.VoiceText) && string.IsNullOrEmpty(ret.SubtitleText))
+                assigned = false;
+
+            if (assigned)
+            {
                 ret.Success = true;
+                return ret;
             }
 
-            if (!ret.Success) Log.Warning($"[格式错误] AI 回复不符合格式: {response}");
-
+            ret.Success = false;
+            ret.VoiceText = "";
+            ret.SubtitleText = cleaned;
+            Log.Warning($"[格式错误] AI 回复不符合格式: {raw}");
             return ret;
+        }
+
+        /// <summary>去除不含台词的中间推理块，便于解析三栏格式。</summary>
+        public static string StripReasoningBlocks(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            string cur = text;
+            for (int i = 0; i < 12; i++)
+            {
+                string next = cur;
+                next = Regex.Replace(next, @"```[\s\S]*?```", "", RegexOptions.IgnoreCase);
+                next = Regex.Replace(next, @"``[\s\S]*?``", "", RegexOptions.IgnoreCase);
+                if (next == cur)
+                    break;
+                cur = next.Trim();
+            }
+            return cur.Trim();
+        }
+
+        private static bool TryAssignTriple(string[] parts, ref LLMStandardResponse ret)
+        {
+            if (parts == null || parts.Length < 3)
+                return false;
+
+            string tagPart;
+            string voice;
+            string sub;
+
+            if (parts.Length == 3)
+            {
+                tagPart = parts[0].Trim();
+                voice = parts[1].Trim();
+                sub = parts[2].Trim();
+            }
+            else
+            {
+                tagPart = parts[0].Trim();
+                sub = parts[parts.Length - 1].Trim();
+                voice = string.Join("|||", parts.Skip(1).Take(parts.Length - 2)).Trim();
+            }
+
+            AssignTagFromPart(ref ret, tagPart);
+            ret.VoiceText = voice;
+            ret.SubtitleText = sub;
+
+            return !string.IsNullOrEmpty(voice) || !string.IsNullOrEmpty(sub);
+        }
+
+        private static void AssignTagFromPart(ref LLMStandardResponse ret, string tagPart)
+        {
+            var actionMatch = Regex.Match(tagPart, @"\[Action:(\w+)\]");
+            if (actionMatch.Success)
+            {
+                ret.EmotionTag = actionMatch.Groups[1].Value;
+                return;
+            }
+
+            string legacy = tagPart.Replace("[", "").Replace("]", "").Trim();
+            ret.EmotionTag = MapLegacyTag(legacy);
         }
 
         private static string MapLegacyTag(string tag)

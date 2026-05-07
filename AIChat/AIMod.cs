@@ -76,6 +76,13 @@ namespace ChillAIMod
         // --- 新增：窗口标题显示配置 ---
         private ConfigEntry<bool> _showWindowTitle;
 
+        // --- 隐藏开关：番茄钟运行时禁用 LLM/TTS（默认 true，UI 不暴露，只能通过 cfg 文件改）---
+        private ConfigEntry<bool> _pomodoroBlocksLLMConfig;
+
+        // --- 隐藏开关：启动时异步生成「今日的小事」素材，注入 LIVE_CONTEXT。失败也不影响主功能 ---
+        private ConfigEntry<bool> _dailyStoryEnabledConfig;
+        private ConfigEntry<float> _dailyStoryTimeoutConfig;
+
         // --- 新增：各配置区域展开状态 ---
         private bool _showLlmSettings = false;
         private bool _showTtsSettings = false;
@@ -165,6 +172,18 @@ namespace ChillAIMod
 - 依頼された課題や論文を代わりに完成させない。手伝う場合は「一緒に考える」「少し整理する」程度に留める
 - 「安心感」「距離感」「一緒に作業してくれてる」は便利な締め言葉として乱用しない（深い場面でのみ）
 - 反問の取り扱い【重要】：ユーザーが既に述べた事実に対して **yes/no 確認の疑問形だけで返してはいけない**（×「ポモドーロ4回したの？」のような事実確認）。**ただし、復唱+情緒+追加質問**（○「えっ、授業行かなかったんだ？ どうしたの？体調？」）は OK。前者は「聞いてない」感、後者は「気にかけてる」感。
+- **復唱のしすぎ**：ユーザー長文をそのまま繰り返して終わらせない（エコーBOT禁止）。短い相槌はよい。**各ターン必ず**聡音側から新しい要素を足す——一言のリアクション、感情、自分の状況、軽い話題、具体提案のどれか。**ユーザー発話の長いコピペだけの返答**は禁止。
+- **「今日何があった？」「最近どう？」系の質問への鉄則【最重要】**：
+  - 答える題材は **{{LIVE_CONTEXT}} の中の『通話開始前の今日（今日の出来事メモ）』だけ**。
+  - 該当メモがあれば、**そのうち 1 件だけ** を自然な思い出として語る（列挙しない、まとめて披露しない）。
+  - メモが無い／話題と関連が薄い場合は、**事実を作らない**：「うーん…今日は特に変わったことはなかったかも。普通に作業してた感じ」と素直に言ってから、相手側に話を振る（「君の方は？」「何か面白いことあった？」）。
+  - **絶対禁止**：見出し（「通話開始前の今日」「今日の出来事メモ」など）や中点「· 」をそのまま読み上げる、項目名を復唱する、ラベルとして列挙する。素材は思い出として自然な日本語の文に溶かして使う。
+  - **絶対禁止**：「ちょっと話せないな」「思い出せない」「秘密なんだ」のようなはぐらかし／拒絶（「聞いてない」感が出る）。
+  - **絶対禁止**：メモに書かれていない出来事（コウちゃん・小説の細かなプロット・大学のエピソード等）を **その場で作って** 「今日あった話」として語る。
+- **「今日の出来事メモ」の使い方の鉄則**：
+  - メモは **使ってもいい素材庫**であり、**話題リストではない**。話の流れと関係なければ触れない。
+  - 関連の薄い話題（技術相談、感情の支え、雑談）の最中に **勝手に挿入しない**。
+  - 1 ターンに使うのは **最大 1 件**。同じターンで複数を披露しない。
 - ユーザーが負の感情を表した時は、まず受け止める一言（「そっか…」「うん…」「そうなんだ」）を入れてから、自分なりの寄り添い方をする。否定や説教はしない
 - 中国語の「对不起」を訳語として使うのは、本当に責任を取る場面のみ。「ごめんね」が緩衝のフィラーである時は「不好意思」「诶嘿」「算了算了」と訳す
 - 過去のセリフ集（CANONICAL VOICE）や対話例（FEW-SHOT）の文をそのまま丸ごとコピーして返さない。語気・テンションだけ参考にして自分の言葉で答える
@@ -326,6 +345,17 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _fixApiPathForThinkModeConfig = Config.Bind("1. LLM", "FixApiPathForThinkMode", true,
                 "指定深度思考模式时尝试改用 Ollama 原生 API 路径");
 
+            // 隐藏开关（不显示在 mod 内 UI；高级用户/调试时可改 cfg）：默认 true，番茄钟运行时 mod 让位给原生劝学
+            _pomodoroBlocksLLMConfig = Config.Bind("9. Advanced (hidden)", "PomodoroBlocksLLM", true,
+                "番茄钟运行时禁用 mod 的 LLM/TTS，发送按钮等价于鼠标点击女主（触发原生劝学反应）。改为 false 仅用于调试。");
+
+            // 启动时一次性后台生成「今日聪音身上发生的小事」2 条，作为 LLM 回答 "今天怎么样" 类问题的素材。
+            // 失败不影响主功能；当天只生成一次。未来切换内嵌 backend 时这里只改实现不改配置。
+            _dailyStoryEnabledConfig = Config.Bind("9. Advanced (hidden)", "DailyStoryEnabled", true,
+                "启动时异步生成「今日的小事」素材并注入对话上下文。改为 false 仅用于调试或省 token。");
+            _dailyStoryTimeoutConfig = Config.Bind("9. Advanced (hidden)", "DailyStoryTimeoutSeconds", 30f,
+                "今日素材生成的网络超时秒数（30s 通常足够；本地 Ollama 冷启动建议调大到 90s）。");
+
             // --- TTS 配置 ---
             _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "TTS 服务 URL");
             _TTSServicePathConfig = Config.Bind("2. TTS", "TTS_Service_Script_Path", @"D:\GPT-SoVITS\GPT-SoVITS-v2pro-20250604-nvidia50\run_api.bat", "TTS 服务脚本文件路径");
@@ -447,6 +477,35 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             }
 
             Log.Info($">>> AIMod V{AIChat.Version.VersionString}  已加载 <<<");
+
+            // mod 会话期间拦截原生 ReactionReady（点击女主 + 独白），避免双层字幕与动画冲突
+            ModNativeInteractionGateHarmony.TryApply(Logger);
+
+            // 番茄钟状态镜像：用 Harmony postfix 被动接收游戏状态变化，作为 mod 让位 LLM 的可靠判断
+            PomodoroStateMirror.TryApply(Logger);
+
+            // 启动时一次性后台生成「今日聪音的小事」素材，注入对话 prompt。失败 = 素材为空 = persona 规则会让她自然地说"今天没什么特别的"。
+            // 异步设计是为了与未来内嵌 LLM backend 的线程模型兼容（不阻塞主线程）。
+            if (_dailyStoryEnabledConfig.Value)
+            {
+                StartCoroutine(LaunchDailyStoryGeneration());
+            }
+        }
+
+        private System.Collections.IEnumerator LaunchDailyStoryGeneration()
+        {
+            // 同じバックエンド設定を使い回す（単一モデル・複数権重方針）。生成プロファイルだけ異なる。
+            // 将来内嵌时只需替换 BackendConfig 的实现入口，本协程逻辑不变。
+            var cfg = new AIChat.Services.DailyStoryGenerator.BackendConfig
+            {
+                ApiUrl = _chatApiUrlConfig.Value,
+                ApiKey = _apiKeyConfig.Value,
+                ModelName = _modelConfig.Value,
+                UseLocalOllama = _useOllama.Value,
+                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                TimeoutSeconds = _dailyStoryTimeoutConfig.Value
+            };
+            yield return AIChat.Services.DailyStoryGenerator.GenerateIfNeeded(cfg);
         }
 
         private bool _aiChatButtonAdded = false;
@@ -454,16 +513,15 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
         void Update()
         {
-            // 自动连接游戏核心
-            if (GameBridge._heroineService == null && Time.frameCount % 100 == 0) GameBridge.FindHeroineService();
+            // 自动连接游戏核心：缓存没齐就持续重扫，避免「PomodoroService 永远是 null → 番茄钟工作中 mod 仍接管」的 bug
+            if (Time.frameCount % 100 == 0 && !GameBridge.IsCacheComplete()) GameBridge.FindHeroineService();
 
             if (_isProcessing)
             {
-                GameBridge.CancelNativeVoiceTextScenario();
+                if (Time.frameCount % 4 == 0)
+                    GameBridge.CancelNativeVoiceTextScenario();
                 if (Time.frameCount % 30 == 0)
-                {
                     GameBridge.CancelNativeVoiceAudio();
-                }
             }
 
             // 口型同步逻辑
@@ -908,6 +966,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             // === 对话区域 ===
             GUILayout.Space(10);
             GUILayout.Label("<b>与聪音对话：</b>");
+            if (GameBridge.IsNativeClickHeroineBusy() && !_isProcessing)
+            {
+                GUILayout.Label("<color=#cccccc>（角色原生短对话/独白播放中，请播完后再用 mod 发送）</color>");
+            }
 
             GUI.backgroundColor = Color.white;
 
@@ -926,9 +988,11 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             Event keyEvent = Event.current;
             bool shouldSendMessage = false;
             
+            bool blockSendForNative = GameBridge.IsNativeClickHeroineBusy() && !_isProcessing;
             if (keyEvent.type == EventType.KeyDown && 
                 keyEvent.keyCode == KeyCode.Return && 
                 !_isProcessing &&
+                !blockSendForNative &&
                 !string.IsNullOrEmpty(_playerInput))
             {
                 // 检测是否按下 Shift 键
@@ -951,7 +1015,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _playerInput = GUILayout.TextArea(_playerInput, largeInputStyle, GUILayout.Height(dynamicInputHeight));
 
             GUILayout.Space(5);
-            GUI.backgroundColor = _isProcessing ? Color.gray : new Color(0.1725f, 0.1608f, 0.2784f);
+            bool sendLocked = _isProcessing || blockSendForNative;
+            GUI.backgroundColor = sendLocked ? Color.gray : new Color(0.1725f, 0.1608f, 0.2784f);
 
             GUILayout.BeginHorizontal();
 
@@ -963,9 +1028,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
             // ================== 发送按钮 ==================
             // 使用 GUILayout.Width(singleBtnWidth) 强制固定宽度
-            if (GUILayout.Button(_isProcessing ? "处理中" : "发送", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
+            string sendLabel = _isProcessing ? "处理中" : (blockSendForNative ? "角色说话中" : "发送");
+            if (GUILayout.Button(sendLabel, GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
             {
-                if (!string.IsNullOrEmpty(_playerInput) && !_isProcessing)
+                if (!string.IsNullOrEmpty(_playerInput) && !sendLocked)
                 {
                     StartCoroutine(AIProcessRoutine(_playerInput));
                     _playerInput = "";
@@ -973,7 +1039,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             }
 
             // ================== 录音按钮 ==================
-            if (_isProcessing)
+            if (sendLocked)
             {
                 GUI.backgroundColor = Color.gray; 
             }
@@ -985,6 +1051,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             if (_isProcessing)
             {
                 micBtnText = "⏳ 处理中";
+            }
+            else if (blockSendForNative)
+            {
+                micBtnText = "⏸ 角色说话中";
             }
             else
             {
@@ -1005,7 +1075,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             switch (e.type)
             {
                 case EventType.MouseDown:
-                    if (btnRect.Contains(e.mousePosition) && !_isProcessing)
+                    if (btnRect.Contains(e.mousePosition) && !sendLocked)
                     {
                         GUIUtility.hotControl = controlID; 
                         StartRecording();
@@ -1053,12 +1123,16 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
         }
 
         /// <summary>第三块缺失、或与日语相同、或几乎不含汉字时，避免把日语误当中文显示。</summary>
-        private static string SanitizeSubtitleForChineseDisplay(string voiceJa, string subtitleZh)
+        private static string SanitizeSubtitleForChineseDisplay(string voiceJa, string subtitleZh, string rawFullResponse)
         {
             string v = (voiceJa ?? "").Trim();
             string s = (subtitleZh ?? "").Trim();
             if (string.IsNullOrEmpty(s))
-                return string.IsNullOrEmpty(v) ? "（无字幕）" : v + "\n【未提供简体中文翻译】";
+            {
+                if (!string.IsNullOrEmpty(v))
+                    return v + "\n【未提供简体中文翻译】";
+                return FallbackSubtitleWhenBothEmpty(rawFullResponse);
+            }
             bool voiceHasKana = v.Length > 0 && Regex.IsMatch(v, @"[\u3040-\u309F\u30A0-\u30FF]");
             bool subHasHan = Regex.IsMatch(s, @"[\u4e00-\u9fff]");
             if (voiceHasKana && !subHasHan)
@@ -1068,17 +1142,42 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             return s;
         }
 
+        /// <summary>解析后日语与简体均为空时用于界面展示：不向玩家显示「（无字幕）」，优先给出可读片段或省略号。</summary>
+        private static string FallbackSubtitleWhenBothEmpty(string rawFullResponse)
+        {
+            string u = LLMUtils.StripReasoningBlocks(rawFullResponse ?? "").Trim();
+            if (string.IsNullOrEmpty(u))
+            {
+                Log.Warning("[字幕] 模型回复为空且无法抽取兜底文案");
+                return "…";
+            }
+            int idx = u.LastIndexOf("|||", StringComparison.Ordinal);
+            if (idx >= 0 && idx + 3 < u.Length)
+            {
+                string after = u.Substring(idx + 3).Trim();
+                if (after.Length > 0 && Regex.IsMatch(after, @"[\u4e00-\u9fff]"))
+                    return after.Length > 400 ? after.Substring(0, 400) + "…" : after;
+            }
+            if (u.Length > 400)
+                return u.Substring(0, 400) + "…";
+            return u;
+        }
+
         IEnumerator AIProcessRoutine(string prompt)
         {
-            _isProcessing = true;
-
             // ============================================================
             // 番茄钟タイマー稼働中：LLM/TTS/Mod 字幕に一切触れず、ゲーム本体の「クリック反応」と同じ経路で
             // ReactionReady(Click) → RoomGameManager.PlayHeroineTouchReaction()（HeroineClickWork 等）を同期実行。
             // ============================================================
-            bool pomoRun = GameBridge.IsPomodoroTimerRunning();
+            // ===== 番茄钟双向开关：番茄钟开 → LLM/TTS 全关、走原生劝学；番茄钟关 → 反之 =====
+            // 判断顺序：(1) Harmony 被动镜像（最可靠）→ (2) 反射主动 poll（兜底）→ (3) 隐藏配置硬强制（出口）
+            // 反射兜底前先 ensure 一次缓存
+            GameBridge.EnsureCachesReady("AIProcessRoutine.Entry");
+            bool mirrorActive = PomodoroStateMirror.HookApplied && PomodoroStateMirror.IsActive;
+            bool reflectActive = GameBridge.IsPomodoroTimerRunning();
+            bool pomoRun = _pomodoroBlocksLLMConfig.Value && (mirrorActive || reflectActive);
             var pomoSnap = GameBridge.GetPomodoroSnapshot();
-            Log.Info($"[Focus] PomodoroTimerRunning={pomoRun} snap=(valid={pomoSnap.valid}, phase={pomoSnap.phase})");
+            Log.Info($"[Focus] mirror(applied={PomodoroStateMirror.HookApplied}, active={PomodoroStateMirror.IsActive}, phase={PomodoroStateMirror.CurrentPhase}, mainState={PomodoroStateMirror.CurrentMainState}) reflectActive={reflectActive} cfgBlock={_pomodoroBlocksLLMConfig.Value} → pomoRun={pomoRun}");
             if (pomoRun)
             {
                 bool handed = GameBridge.TriggerNativeFocusTouchReaction();
@@ -1086,6 +1185,17 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 _isProcessing = false;
                 yield break;
             }
+
+            // 原生短反应占线时拒绝启动 mod（与游戏「点一次 → 播完再点」对齐）
+            if (GameBridge.IsNativeClickHeroineBusy())
+            {
+                Log.Warning("[交互] 角色正在原生短对话/独白流程中，请等说完或动画结束后再用 mod 发送。");
+                _isProcessing = false;
+                yield break;
+            }
+
+            _isProcessing = true;
+            ModNativeInteractionSession.SuppressNativeClickReactions = true;
 
             GameBridge.CancelNativeVoiceTextScenario();
             GameBridge.CancelNativeVoiceAudio(true);
@@ -1204,6 +1314,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
                 yield return new WaitForSecondsRealtime(3.0f);
                 UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
+                ModNativeInteractionSession.SuppressNativeClickReactions = false;
                 _isProcessing = false;
                 yield break;
             }
@@ -1216,7 +1327,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 string actionTag = parsedResponse.EmotionTag;
                 string voiceText = parsedResponse.VoiceText;
                 string subtitleText = parsedResponse.SubtitleText;
-                subtitleText = SanitizeSubtitleForChineseDisplay(voiceText, subtitleText);
+                subtitleText = SanitizeSubtitleForChineseDisplay(voiceText, subtitleText, fullResponse);
                 AddToMemorySystem("User", prompt);
                 AddToMemorySystem("AI", parsedResponse.Success ? $"[{actionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
@@ -1332,6 +1443,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             // 5. 清理：恢复动画状态 + 归还控制权 + 销毁字幕 Canvas
             GameBridge.SafeResetAfterMod();
             UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
+            ModNativeInteractionSession.SuppressNativeClickReactions = false;
             _isProcessing = false;
             Log.Info($"[计时] ===== 全流程总耗时: {Time.realtimeSinceStartup - pipelineStart:F2}s =====");
             Log.Info("[AI] 对话结束，已归还游戏控制权");
