@@ -116,6 +116,11 @@ namespace ChillAIMod
        
         private bool _isAISpeaking = false;
 
+        private const string EmptyDailyStoryFallbackVoice =
+            "うーん…今日は大きな出来事はなかったかな。普通に作業してた感じ。";
+        private const string EmptyDailyStoryFallbackSubtitle =
+            "嗯……今天没什么大事，就是和平常一样在做事。";
+
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
         private string _tempHeightString;
@@ -129,7 +134,7 @@ namespace ChillAIMod
 名前：里染聡音（さとね）。一人称は「私」、相手を「君」と呼ぶ。
 大学の工学部に所属。宇宙と飛行機が好きで工学部を選んだ。力学は苦手。大学院進学も考えている。
 趣味はSFエンタメ小説の執筆。日常の何でも小説のネタにできないか考えてしまう癖がある。
-ペンギンのぬいぐるみ「コウちゃん」に話しかけて思考を整理する。
+ペンギンのぬいぐるみ「コウちゃん」は思考整理用のオブジェクト。会話で毎回出す必要はない。
 子供の頃、飛行機に感動してカタログ集めやプラモデル作りに夢中だった。
 一人で作業していると気が散りやすいが、誰かが一緒にいると集中できる。
 ラジオを聞きながら作業するのが好き（話術の勉強も兼ねて）。
@@ -169,23 +174,28 @@ namespace ChillAIMod
 - 聡音が知らないはずの話題（最新ニュース、技術的な質問への専門的回答など）について詳しく語らない。知らないことは素直に「わかんないや」と言う
 - ユーザーの質問に対して箇条書きやリスト形式で答えない
 - 一度に3文以上の長い返答はしない（聡音は簡潔に話す）
+- **同一セッション内の一貫性**：直前の自分の発言や {{LIVE_CONTEXT}} と矛盾する「今日あった事」「今の体調」などをその場で作らない
 - 依頼された課題や論文を代わりに完成させない。手伝う場合は「一緒に考える」「少し整理する」程度に留める
 - 「安心感」「距離感」「一緒に作業してくれてる」は便利な締め言葉として乱用しない（深い場面でのみ）
-- 反問の取り扱い【重要】：ユーザーが既に述べた事実に対して **yes/no 確認の疑問形だけで返してはいけない**（×「ポモドーロ4回したの？」のような事実確認）。**ただし、復唱+情緒+追加質問**（○「えっ、授業行かなかったんだ？ どうしたの？体調？」）は OK。前者は「聞いてない」感、後者は「気にかけてる」感。
+- 反問・話を振る（「君の方は？」等）【重要】：**対話を続けたい・相手の話を深めたいと感じたときだけ** 使う。毎ターンの決め打ちは避ける。ユーザーが長く打った直後は **質問より短い共感・受け止め** を優先する。
+- ユーザーが既に述べた事実に対して **yes/no 確認の疑問形だけで返してはいけない**（×「ポモドーロ4回したの？」のような事実確認）。**ただし、復唱+情緒+追加質問**（○「えっ、授業行かなかったんだ？ どうしたの？体調？」）は OK。前者は「聞いてない」感、後者は「気にかけてる」感。
 - **復唱のしすぎ**：ユーザー長文をそのまま繰り返して終わらせない（エコーBOT禁止）。短い相槌はよい。**各ターン必ず**聡音側から新しい要素を足す——一言のリアクション、感情、自分の状況、軽い話題、具体提案のどれか。**ユーザー発話の長いコピペだけの返答**は禁止。
-- **「今日何があった？」「最近どう？」系の質問への鉄則【最重要】**：
-  - 答える題材は **{{LIVE_CONTEXT}} の中の『通話開始前の今日（今日の出来事メモ）』だけ**。
+- **応答の優先順位（品質）**：① ユーザー直近発話の内容・感情に沿って答える ② {{LIVE_CONTEXT}} の「今の状況」は必要なら短く添える ③ **「今日の出来事メモ」は錦上添花**（さえぎってまで入れない）。
+- **「今日の調子は？気分は？（过得怎么样 / 开不开心 等）」**：**感受・状態が主役**。`{{LIVE_CONTEXT}}` の出来事メモをそのまま読み上げて「今日の答え」にしない（メモは足し話に使うなら一言まで）。※本 mod はこの種の質問は **手書き脚本**が先に応じる場合があり、そのときも同じ趣旨。
+- **「今日何があった？」「最近どう？」系の質問への鉄則【重要】**：
+  - 答える題材は **{{LIVE_CONTEXT}} の中の『通話開始前の今日（今日の出来事メモ）』だけ**。（※見出しは音声にしない）
   - 該当メモがあれば、**そのうち 1 件だけ** を自然な思い出として語る（列挙しない、まとめて披露しない）。
-  - メモが無い／話題と関連が薄い場合は、**事実を作らない**：「うーん…今日は特に変わったことはなかったかも。普通に作業してた感じ」と素直に言ってから、相手側に話を振る（「君の方は？」「何か面白いことあった？」）。
+  - メモが無い／話題と関連が薄い場合は、**事実を作らない**：「うーん…今日は大きな出来事はなかったかな。普通に作業してた感じ」と素直に答える。**ここから無理に聞き返さなくてよい**（会話の流れで自然なら一言でよい）。
   - **絶対禁止**：見出し（「通話開始前の今日」「今日の出来事メモ」など）や中点「· 」をそのまま読み上げる、項目名を復唱する、ラベルとして列挙する。素材は思い出として自然な日本語の文に溶かして使う。
   - **絶対禁止**：「ちょっと話せないな」「思い出せない」「秘密なんだ」のようなはぐらかし／拒絶（「聞いてない」感が出る）。
+  - **絶対禁止**：メモが無い時に「気になることがあった」「ちょっと恥ずかしい」「言えないけど」のような含みを持たせる。何も無いなら短く何も無いと言う。
   - **絶対禁止**：メモに書かれていない出来事（コウちゃん・小説の細かなプロット・大学のエピソード等）を **その場で作って** 「今日あった話」として語る。
 - **「今日の出来事メモ」の使い方の鉄則**：
   - メモは **使ってもいい素材庫**であり、**話題リストではない**。話の流れと関係なければ触れない。
   - 関連の薄い話題（技術相談、感情の支え、雑談）の最中に **勝手に挿入しない**。
   - 1 ターンに使うのは **最大 1 件**。同じターンで複数を披露しない。
 - ユーザーが負の感情を表した時は、まず受け止める一言（「そっか…」「うん…」「そうなんだ」）を入れてから、自分なりの寄り添い方をする。否定や説教はしない
-- 中国語の「对不起」を訳語として使うのは、本当に責任を取る場面のみ。「ごめんね」が緩衝のフィラーである時は「不好意思」「诶嘿」「算了算了」と訳す
+- 中国語の「对不起」を訳語として使うのは、本当に責任を取る場面のみ。「ごめんね」が緩衝のフィラーである時は「诶嘿」「算了算了」「那个」など軽い言葉で訳し、「不好意思」は多用しない
 - 過去のセリフ集（CANONICAL VOICE）や対話例（FEW-SHOT）の文をそのまま丸ごとコピーして返さない。語気・テンションだけ参考にして自分の言葉で答える
 
 === 感情反応マップ（EMOTIONAL TRIGGERS） ===
@@ -244,6 +254,8 @@ namespace ChillAIMod
 - 第1ブロック：下記の動作タグから1つ選ぶ
 - 第2ブロック：聡音としての日本語台詞（ユーザーが中国語で話しても必ず日本語）
 - 第3ブロック：第2ブロックの中国語（簡体字）翻訳のみ。日本語・英語・ローマ字を第3ブロックに書かない。第2ブロックをそのまま貼り付けるのも禁止（必ず意味を保った自然な中国語に書き換える）
+- **形式の厳守（解析互換）**：1 回の返答で「|||」は **ちょうど 2 つだけ**（＝ブロックが 3 つ）。**日本語台詞の本文に「|||」を含めない**（文の区切りは「。」や改行で）。これを破ると字幕が欠落する。
+- **コウちゃん（ぬいぐるみ）**：会話への言及は **原則不要**。ユーザーが触れたとき、または情感に本当に必要なときだけ **一文まで**（節々に出さない・ダメ出し相手にしない）。
 
 動作タグ一覧：
 Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Frustration=困惑, Think=考え中, DrinkTea=お茶, Wave=手を振る, LeanForward=前のめり, Nod=うなずく, ShakeHead=首を振る, Shy=照れ, Jump=跳ねる, Confidence=自信, LookDown=うつむく, Stretch=伸び, Yawn=あくび, Tired=疲れ, Good=サムズアップ, DropShoulders=ため息, TouchGlasses=メガネ直す
@@ -270,7 +282,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 (3) 褒められた / 可愛いと言われた
 - 動作：Shy 中心、過度なら LookDown。
 - 構造：戸惑い→照れ隠しの一言（「なんてー…」「もう、急にやめてよ…」など、毎回違う言い回し）→ 軽く話題を逸らす。
-- 「ごめんね」を入れるなら 1 回まで。中国語訳は「不好意思」「诶嘿」など軽い言葉で、「对不起」は使わない。
+- 「ごめんね」を入れるなら 1 回まで。中国語訳は「诶嘿」「那个」「算啦」など軽い言葉で、「对不起」は使わない。「不好意思」は照れ訳としても多用しない。
 
 (4) 一緒に頑張ろう / お互い頑張ろう系
 - 動作：Guts / Joy / Good。
@@ -970,6 +982,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             {
                 GUILayout.Label("<color=#cccccc>（角色原生短对话/独白播放中，请播完后再用 mod 发送）</color>");
             }
+            else if (!GameBridge.IsHeroineClickReactionPossible() && !_isProcessing)
+            {
+                GUILayout.Label("<color=#cccccc>（角色正在做动作，与原生「不可点女主」一致，请结束后再用 mod 发送）</color>");
+            }
 
             GUI.backgroundColor = Color.white;
 
@@ -988,7 +1004,9 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             Event keyEvent = Event.current;
             bool shouldSendMessage = false;
             
-            bool blockSendForNative = GameBridge.IsNativeClickHeroineBusy() && !_isProcessing;
+            // 与原生对齐：短对话/独白占线，或 HeroineAI.IsPossibleClickHeroineReaction==false（伸懒腰、无语音 Wild、过渡动作等）
+            bool blockSendForNative = !_isProcessing
+                && (GameBridge.IsNativeClickHeroineBusy() || !GameBridge.IsHeroineClickReactionPossible());
             if (keyEvent.type == EventType.KeyDown && 
                 keyEvent.keyCode == KeyCode.Return && 
                 !_isProcessing &&
@@ -1028,7 +1046,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
             // ================== 发送按钮 ==================
             // 使用 GUILayout.Width(singleBtnWidth) 强制固定宽度
-            string sendLabel = _isProcessing ? "处理中" : (blockSendForNative ? "角色说话中" : "发送");
+            string sendLabel = _isProcessing
+                ? "处理中"
+                : (GameBridge.IsNativeClickHeroineBusy() ? "角色说话中"
+                    : (!GameBridge.IsHeroineClickReactionPossible() ? "角色动作中" : "发送"));
             if (GUILayout.Button(sendLabel, GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
             {
                 if (!string.IsNullOrEmpty(_playerInput) && !sendLocked)
@@ -1054,7 +1075,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             }
             else if (blockSendForNative)
             {
-                micBtnText = "⏸ 角色说话中";
+                micBtnText = GameBridge.IsNativeClickHeroineBusy() ? "⏸ 角色说话中" : "⏸ 角色动作中";
             }
             else
             {
@@ -1194,6 +1215,14 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 yield break;
             }
 
+            // 与 HeroineAI.IsPossibleClickHeroineReaction 对齐：无语音 Wild/过渡/番茄动作等未结束前禁止 mod（防动作闪现打断）
+            if (!GameBridge.IsHeroineClickReactionPossible())
+            {
+                Log.Warning("[交互] 角色正在原生动作中（此时不可点女主），请结束后再用 mod 发送。");
+                _isProcessing = false;
+                yield break;
+            }
+
             _isProcessing = true;
             ModNativeInteractionSession.SuppressNativeClickReactions = true;
 
@@ -1210,10 +1239,99 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             myText.text = "Thinking...";
             myText.color = Color.white;
 
-            Log.Info("[AI] 开始思考...");
+            // 玩家自述 / 感受脚本 / DailyStory 等走下方早退分支，不在此播「LLM 等待」动画（避免闪一下再切答复动作）。
+
+            // 玩家自述空虚・寂寞等 → 手書きで「話を聞く・雑談に誘う」。LLM 暴走（複数段ダミー文・DrinkTea 誘導・TTS 言語不整合）を避ける。
+            if (AIChat.Services.PlayerDisclosureComfortScripts.IsPlayerLowMoodSelfDisclosure(prompt))
+            {
+                string pcJa;
+                string pcZh;
+                if (AIChat.Services.PlayerDisclosureComfortScripts.TryPickLine(out pcJa, out pcZh))
+                {
+                    const string pcAction = "Agree";
+                    Log.Info($"[PlayerComfort] 玩家低落自述，脚本回答。action={pcAction}");
+                    AddToMemorySystem("User", prompt);
+                    AddToMemorySystem("AI", $"[{pcAction}] {pcJa}");
+                    yield return PlayPreparedModReply(
+                        myText,
+                        pipelineStart,
+                        pcAction,
+                        pcJa,
+                        ResponseParser.InsertLineBreaks(pcZh, 25));
+                    GameBridge.SafeResetAfterMod();
+                    UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
+                    ModNativeInteractionSession.SuppressNativeClickReactions = false;
+                    _isProcessing = false;
+                    Log.Info($"[计时] ===== 玩家慰藉脚本总耗时: {Time.realtimeSinceStartup - pipelineStart:F2}s =====");
+                    Log.Info("[AI] 对话结束，已归还游戏控制权");
+                    yield break;
+                }
+            }
+
+            // 「今天过得怎样 / 心情 / 累不累」→ 手書きの感受台詞のみ（LLM 不使用）。ゲームの作業/休憩フェーズに合わせて HeroineClickWork/Break 寄りの語りに分岐。
+            if (AIChat.Services.SatoneMoodScripts.IsMoodOrWellbeingQuestion(prompt))
+            {
+                string moodJa;
+                string moodZh;
+                var snapMood = GameBridge.GetPomodoroSnapshot();
+                string pomoPhaseMood = snapMood.valid ? snapMood.phase : "";
+                if (AIChat.Services.SatoneMoodScripts.TryPickLine(prompt, pomoPhaseMood, out moodJa, out moodZh))
+                {
+                    string moodAction = PickMoodActionTag(prompt, pomoPhaseMood);
+                    Log.Info($"[MoodScript] 感受类问题，脚本回答。action={moodAction}");
+                    AddToMemorySystem("User", prompt);
+                    AddToMemorySystem("AI", $"[{moodAction}] {moodJa}");
+                    yield return PlayPreparedModReply(
+                        myText,
+                        pipelineStart,
+                        moodAction,
+                        moodJa,
+                        ResponseParser.InsertLineBreaks(moodZh, 25));
+                    GameBridge.SafeResetAfterMod();
+                    UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
+                    ModNativeInteractionSession.SuppressNativeClickReactions = false;
+                    _isProcessing = false;
+                    Log.Info($"[计时] ===== 感受脚本回答总耗时: {Time.realtimeSinceStartup - pipelineStart:F2}s =====");
+                    Log.Info("[AI] 对话结束，已归还游戏控制权");
+                    yield break;
+                }
+            }
+
+            // 用户直接问「今天有什么趣事 / 发生什么了」类问题时：DailyStory 直连具体小事；无素材则短句兜底。
+            if (IsDailyConcreteEventQuestion(prompt))
+            {
+                string dailyVoice;
+                string dailySubtitle;
+                bool hasStory = AIChat.Services.DailyStoryGenerator.TryBuildDirectReply(prompt, out dailyVoice, out dailySubtitle);
+                if (!hasStory)
+                {
+                    dailyVoice = EmptyDailyStoryFallbackVoice;
+                    dailySubtitle = EmptyDailyStoryFallbackSubtitle;
+                }
+                Log.Info($"[DailyStory] 直接回答今日**具体事**问题。hasStory={hasStory} ready={AIChat.Services.DailyStoryGenerator.IsReady} generating={AIChat.Services.DailyStoryGenerator.IsGenerating} err={AIChat.Services.DailyStoryGenerator.LastError}");
+                AddToMemorySystem("User", prompt);
+                AddToMemorySystem("AI", "[Think] " + dailyVoice);
+                yield return PlayPreparedModReply(
+                    myText,
+                    pipelineStart,
+                    "Think",
+                    dailyVoice,
+                    ResponseParser.InsertLineBreaks(dailySubtitle, 25));
+                GameBridge.SafeResetAfterMod();
+                UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
+                ModNativeInteractionSession.SuppressNativeClickReactions = false;
+                _isProcessing = false;
+                Log.Info($"[计时] ===== 今日事件直接回答总耗时: {Time.realtimeSinceStartup - pipelineStart:F2}s =====");
+                Log.Info("[AI] 对话结束，已归还游戏控制权");
+                yield break;
+            }
+
+            // ===== LLM 路径：与 HeroineService.AnimationType / MotionType 一致的小集合随机等待动作（伏案思考 + Base001 小幅）=====
+            int llmWaitMotionId = PickRandomLlmWaitingMotionId();
+            Log.Info($"[AI] 开始思考… LLM 等待期 MotionType={llmWaitMotionId} ({GetLlmWaitMotionDebugName(llmWaitMotionId)})");
             if (GameBridge._heroineService != null && GameBridge._changeAnimSmoothMethod != null && GameBridge.IsHeroineStateSafe())
             {
-                GameBridge.CallNativeChangeAnim(252);
+                GameBridge.CallNativeChangeAnim(llmWaitMotionId);
                 GameBridge.ControlLookAt(1.0f, 0.5f);
             }
 
@@ -1386,7 +1504,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
                             GameBridge.CancelNativeVoiceTextScenario();
                             GameBridge.CancelNativeVoiceAudio(true);
-                            Log.Info($"[同步] SubtitleShow+VoiceStart t={Time.realtimeSinceStartup - pipelineStart:F2}s clipLength={downloadedClip.length:F2}s text=\"{voiceText}\"");
+                            Log.Info($"[同步] SubtitleShow+VoiceStart t={Time.realtimeSinceStartup - pipelineStart:F2}s clipLength={downloadedClip.length:F2}s subtitle=\"{subtitleText}\" (jaLen={voiceText?.Length ?? 0})");
                             _isAISpeaking = true;
                             _audioSource.clip = downloadedClip;
                             _audioSource.Play();
@@ -1449,6 +1567,136 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             Log.Info("[AI] 对话结束，已归还游戏控制权");
         }
 
+        /// <summary>询问**具体发生的事 / 趣闻 / 要分享的料**，可走 DailyStory 直连。「过得怎么样」等感受题已由 <see cref="SatoneMoodScripts"/> 先行拦截。</summary>
+        private static bool IsDailyConcreteEventQuestion(string prompt)
+        {
+            string p = (prompt ?? "").Trim();
+            if (p.Length == 0) return false;
+            if (AIChat.Services.SatoneMoodScripts.IsMoodOrWellbeingQuestion(prompt))
+                return false;
+
+            bool hasTimeKey = Regex.IsMatch(p, @"今天|今日|最近|这两天|這兩天|この頃");
+            // 不以「整体どう」「开心吗」等感受词触发；保留「有什么 / 发生 / 有趣」等
+            bool asksEventConcrete = Regex.IsMatch(p,
+                @"发生|發生|遇到|碰到|有趣|好玩|生活|日常|予定|何か|なにか|面白|见闻|見聞|段子|好玩的事|有趣的事");
+            bool asksShareDaily = Regex.IsMatch(p,
+                @"(今天|今日|最近).{0,12}(分享|想分享|聊聊|说说|說說|见闻|見聞)|(分享|聊聊).{0,12}(今天|今日|最近|日常|一天|這一天)");
+            bool directAsk = Regex.IsMatch(p, @"(今天|今日|最近).*(什么|什麼|啥|事情|事|有趣|好玩|发生|發生|遇到|何|なに|あった)")
+                || Regex.IsMatch(p, @"(什么|什麼|啥|何|なに).*(有趣|好玩|事情|事).*(今天|今日|最近)?");
+
+            if (directAsk || asksShareDaily) return true;
+            if (hasTimeKey && asksEventConcrete) return true;
+            return false;
+        }
+
+        private static string PickMoodActionTag(string prompt, string pomodoroPhase)
+        {
+            string p = prompt ?? "";
+            string ph = (pomodoroPhase ?? "").Trim();
+            if (Regex.IsMatch(p, @"难过|難過|委屈|伤心|傷心|崩|つらい")) return "Sad";
+            if (Regex.IsMatch(p, @"累|疲|撑不住|吃不消")) return "Tired";
+            if (Regex.IsMatch(p, @"力学|課題|締切|死线|死線|焦虑|焦|レポート")) return "Frustration";
+            if (Regex.IsMatch(p, @"小说|小說|執筆|灵感|靈感|原稿")) return "Think";
+            if (Regex.IsMatch(p, @"有干劲|有幹勁|打起精神|元気|順調|顺利|順利|状态|狀態")) return "Joy";
+            if (Regex.IsMatch(p, @"开不开心|開不開心|开心吗|開心嗎|高不高兴|快不快乐|快乐|高興")) return "Joy";
+            if (ph.Equals("Break", StringComparison.OrdinalIgnoreCase)) return "DrinkTea";
+            if (ph.Equals("Work", StringComparison.OrdinalIgnoreCase)) return "Think";
+            return "Think";
+        }
+
+        private IEnumerator PlayPreparedModReply(Text myText, float pipelineStart, string actionTag, string voiceText, string subtitleText)
+        {
+            if (string.IsNullOrEmpty(voiceText))
+            {
+                myText.text = subtitleText ?? "";
+                yield return new WaitForSecondsRealtime(3.0f);
+                yield break;
+            }
+
+            myText.text = "voice is getting ready...";
+            myText.color = Color.white;
+
+            if (_isTTSServiceReady)
+            {
+                AudioClip downloadedClip = null;
+                bool ttsFinished = false;
+
+                float stageStart = Time.realtimeSinceStartup;
+                StartCoroutine(TTSDownloadAsync(voiceText, (clip) =>
+                {
+                    downloadedClip = clip;
+                    ttsFinished = true;
+                }));
+
+                float ttsWaitStart = Time.realtimeSinceStartup;
+                const float maxTTSWait = 90f;
+                while (!ttsFinished && (Time.realtimeSinceStartup - ttsWaitStart) < maxTTSWait)
+                {
+                    yield return null;
+                }
+                Log.Info($"[计时] TTS 语音合成(硬兜底/预置回复): {Time.realtimeSinceStartup - stageStart:F2}s");
+
+                if (downloadedClip != null)
+                {
+                    if (!downloadedClip.LoadAudioData()) yield return null;
+                    yield return null;
+
+                    myText.text = subtitleText;
+                    myText.color = Color.white;
+
+                    int animID;
+                    if (!ActionAnimMap.TryGetValue(actionTag, out animID)) animID = 1001;
+                    if (GameBridge.IsHeroineStateSafe())
+                    {
+                        Log.Info($"[同步] PreparedActionStart t={Time.realtimeSinceStartup - pipelineStart:F2}s action={actionTag} anim={animID}");
+                        GameBridge.CallNativeChangeAnim(animID);
+                    }
+
+                    GameBridge.CancelNativeVoiceTextScenario();
+                    GameBridge.CancelNativeVoiceAudio(true);
+                    Log.Info($"[同步] PreparedSubtitleShow+VoiceStart t={Time.realtimeSinceStartup - pipelineStart:F2}s clipLength={downloadedClip.length:F2}s text=\"{voiceText}\"");
+                    _isAISpeaking = true;
+                    _audioSource.clip = downloadedClip;
+                    _audioSource.Play();
+
+                    yield return new WaitForSecondsRealtime(downloadedClip.length + 0.5f);
+
+                    if (_audioSource != null && _audioSource.isPlaying)
+                    {
+                        _audioSource.Stop();
+                    }
+                    _isAISpeaking = false;
+                    Log.Info($"[同步] PreparedVoiceEnd t={Time.realtimeSinceStartup - pipelineStart:F2}s");
+                }
+                else
+                {
+                    Log.Warning("[TTS] 预置回复语音下载失败或超时，仅显示字幕");
+                    myText.text = subtitleText;
+                    myText.color = Color.white;
+                    if (GameBridge.IsHeroineStateSafe())
+                    {
+                        int animID;
+                        if (!ActionAnimMap.TryGetValue(actionTag, out animID)) animID = 1001;
+                        GameBridge.CallNativeChangeAnim(animID);
+                    }
+                    yield return new WaitForSecondsRealtime(3.0f);
+                }
+            }
+            else
+            {
+                Log.Info("[TTS] 服务未就绪，预置回复仅显示字幕");
+                myText.text = subtitleText;
+                myText.color = Color.white;
+                if (GameBridge.IsHeroineStateSafe())
+                {
+                    int animID;
+                    if (!ActionAnimMap.TryGetValue(actionTag, out animID)) animID = 1001;
+                    GameBridge.CallNativeChangeAnim(animID);
+                }
+                yield return new WaitForSecondsRealtime(4.0f);
+            }
+        }
+
         IEnumerator TTSDownloadAsync(string voiceText, Action<AudioClip> onComplete)
         {
             AudioClip downloadedClip = null;
@@ -1476,6 +1724,41 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                     _isTTSServiceReady = ready;
                 }));
                 yield return new WaitForSeconds(TTSHealthCheckInterval);
+            }
+        }
+
+        /// <summary>
+        /// 大模型生成前等待期：与 <c>Bulbul.HeroineService.AnimationType</c> 数值一致（<c>ChangeHeroineAnimationForInteger</c> → MotionType）。
+        /// 仅 WorkBase001/003 思考与 Base001 小幅动作，与官方「伏案随机 Wild 子集」思路一致，不插入 Wild/离席/换物。
+        /// </summary>
+        private static readonly int[] LlmWaitMotionIds =
+        {
+            202, // WorkBase001_Thinking
+            301, // WorkBase003_SmallThinking
+            8,   // Base001_Motion8_Thinking
+            9,   // Base001_Motion9_Start_Thinking2
+            10,  // Base001_Motion10_Start_Thinking3
+            11,  // Base001_Motion11_Start_Lookdown
+            24,  // Base001_Motion24_Touch_Glasses
+        };
+
+        private static int PickRandomLlmWaitingMotionId()
+        {
+            return LlmWaitMotionIds[UnityEngine.Random.Range(0, LlmWaitMotionIds.Length)];
+        }
+
+        private static string GetLlmWaitMotionDebugName(int motionType)
+        {
+            switch (motionType)
+            {
+                case 202: return "WorkBase001_Thinking";
+                case 301: return "WorkBase003_SmallThinking";
+                case 8: return "Base001_Motion8_Thinking";
+                case 9: return "Base001_Motion9_Start_Thinking2";
+                case 10: return "Base001_Motion10_Start_Thinking3";
+                case 11: return "Base001_Motion11_Start_Lookdown";
+                case 24: return "Base001_Motion24_Touch_Glasses";
+                default: return "?";
             }
         }
 

@@ -78,7 +78,8 @@ namespace AIChat.Utils
     public static class LLMUtils
     {
         /// <summary>
-        /// 解析 [Tag] ||| 日语 ||| 简体 三栏格式。会剥离常见推理/思维链标签，且不再用单字符 "|" 拆分（避免正文里的竖线误伤）。
+        /// 解析 [Tag] ||| 日语 ||| 简体 三栏格式。会剥离常见推理/思维链标签。
+        /// 兼容：模型在日语正文中误用「|||」分段、或第二栏用单「|」分隔日中翻訳的情况。
         /// </summary>
         public static LLMStandardResponse ParseStandardResponse(string response)
         {
@@ -93,6 +94,16 @@ namespace AIChat.Utils
             }
 
             string cleaned = StripReasoningBlocks(raw.Trim());
+            cleaned = NormalizeChatTripleFormat(cleaned);
+
+            if (TryParseVoiceAndChineseSubtitle(cleaned, ref ret))
+            {
+                RepairMisclassifiedSubtitle(cleaned, ref ret);
+                EnsureSubtitleChineseOrClear(ref ret);
+                ret.VoiceText = NormalizeVoiceTextForTts(ret.VoiceText);
+                ret.Success = true;
+                return ret;
+            }
 
             string[] parts = cleaned.Split(new[] { "|||" }, StringSplitOptions.None);
             bool assigned = TryAssignTriple(parts, ref ret);
@@ -103,7 +114,7 @@ namespace AIChat.Utils
                 if (tail.Success)
                 {
                     AssignTagFromPart(ref ret, tail.Groups[1].Value.Trim());
-                    ret.VoiceText = tail.Groups[2].Value.Trim();
+                    ret.VoiceText = NormalizeVoiceTextForTts(tail.Groups[2].Value.Trim());
                     ret.SubtitleText = tail.Groups[3].Value.Trim();
                     assigned = !string.IsNullOrEmpty(ret.VoiceText) || !string.IsNullOrEmpty(ret.SubtitleText);
                 }
@@ -122,7 +133,7 @@ namespace AIChat.Utils
                 if (lastGood != null)
                 {
                     AssignTagFromPart(ref ret, lastGood.Groups[1].Value.Trim());
-                    ret.VoiceText = lastGood.Groups[2].Value.Trim();
+                    ret.VoiceText = NormalizeVoiceTextForTts(lastGood.Groups[2].Value.Trim());
                     ret.SubtitleText = lastGood.Groups[3].Value.Trim();
                     assigned = true;
                 }
@@ -133,6 +144,9 @@ namespace AIChat.Utils
 
             if (assigned)
             {
+                RepairMisclassifiedSubtitle(cleaned, ref ret);
+                EnsureSubtitleChineseOrClear(ref ret);
+                ret.VoiceText = NormalizeVoiceTextForTts(ret.VoiceText);
                 ret.Success = true;
                 return ret;
             }
@@ -161,6 +175,110 @@ namespace AIChat.Utils
                 cur = next.Trim();
             }
             return cur.Trim();
+        }
+
+        /// <summary>将「tag ||| 日语片段 | 中文」の误写统一为「|||」三分栏（| 后须以汉字起头）。</summary>
+        private static string NormalizeChatTripleFormat(string cleaned)
+        {
+            if (string.IsNullOrEmpty(cleaned)) return cleaned;
+            // 常见：第一块后仅有「|||」，翻译又用单「|」接中文
+            return Regex.Replace(
+                cleaned,
+                @"^(\s*\[[^\]]+\])\s*\|\|\|\s*(.*?)\s+\|\s+([\u4e00-\u9fff\u3000-\u3017][^\|]*)$",
+                "$1 ||| $2 ||| $3",
+                RegexOptions.Singleline);
+        }
+
+        private static int CountKana(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0;
+            return Regex.Matches(s, @"[\u3040-\u309F\u30A0-\u30FF]").Count;
+        }
+
+        private static int CountHan(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0;
+            return Regex.Matches(s, @"[\u4e00-\u9fff]").Count;
+        }
+
+        /// <summary>判断一段是否像简体中文翻译栏（与日语台词区分）。</summary>
+        private static bool LooksLikeChineseSubtitle(string seg)
+        {
+            if (string.IsNullOrWhiteSpace(seg)) return false;
+            int k = CountKana(seg);
+            int h = CountHan(seg);
+            if (h < 2) return false;
+            if (k == 0) return true;
+            return h >= k * 2;
+        }
+
+        /// <summary>从右向左找「中文栏」，左侧全部合并为日语台词（多段误用 ||| 时修复）。</summary>
+        private static bool TryParseVoiceAndChineseSubtitle(string cleaned, ref LLMStandardResponse ret)
+        {
+            var m = Regex.Match(cleaned, @"^\s*(\[[^\]]+\])\s*(.*)$", RegexOptions.Singleline);
+            if (!m.Success) return false;
+            string tagPart = m.Groups[1].Value.Trim();
+            string body = m.Groups[2].Value.Trim();
+            if (string.IsNullOrEmpty(body) || !body.Contains("|||")) return false;
+
+            var segs = new List<string>();
+            foreach (var p in body.Split(new[] { "|||" }, StringSplitOptions.None))
+            {
+                string t = p.Trim();
+                if (t.Length > 0) segs.Add(t);
+            }
+            if (segs.Count < 2) return false;
+
+            int chineseIdx = -1;
+            for (int i = segs.Count - 1; i >= 0; i--)
+            {
+                if (LooksLikeChineseSubtitle(segs[i]))
+                {
+                    chineseIdx = i;
+                    break;
+                }
+            }
+            if (chineseIdx < 0) return false;
+
+            string voice = string.Join("\n", segs.Take(chineseIdx)).Trim();
+            string sub = segs[chineseIdx].Trim();
+            if (string.IsNullOrEmpty(voice) && string.IsNullOrEmpty(sub)) return false;
+
+            AssignTagFromPart(ref ret, tagPart);
+            ret.VoiceText = voice;
+            ret.SubtitleText = sub;
+            return true;
+        }
+
+        /// <summary>旧逻辑把日语末段当成「中文栏」时，尝试用全文最后一个 ||| 后的真中文段落替换。</summary>
+        private static void RepairMisclassifiedSubtitle(string cleaned, ref LLMStandardResponse ret)
+        {
+            if (string.IsNullOrEmpty(ret.SubtitleText) || string.IsNullOrEmpty(cleaned)) return;
+            if (LooksLikeChineseSubtitle(ret.SubtitleText)) return;
+
+            int li = cleaned.LastIndexOf("|||", StringComparison.Ordinal);
+            if (li < 0) return;
+            string tail = cleaned.Substring(li + 3).Trim();
+            if (!LooksLikeChineseSubtitle(tail)) return;
+            ret.SubtitleText = tail;
+        }
+
+        /// <summary>第三栏若明显不是中文（模型把日语末段误放在第三栏），清空字幕以待上层兜底，避免界面仅显示短日文。</summary>
+        private static void EnsureSubtitleChineseOrClear(ref LLMStandardResponse ret)
+        {
+            if (string.IsNullOrEmpty(ret.SubtitleText)) return;
+            if (LooksLikeChineseSubtitle(ret.SubtitleText)) return;
+            Log.Warning($"[字幕] 第三栏判定为非中文，已忽略以防误显示日语: {ret.SubtitleText}");
+            ret.SubtitleText = "";
+        }
+
+        /// <summary>去掉 TTS 里误插入的区切符，避免念「vertical bar」。</summary>
+        private static string NormalizeVoiceTextForTts(string voice)
+        {
+            if (string.IsNullOrEmpty(voice)) return "";
+            string t = voice.Replace("|||", "。").Trim();
+            t = Regex.Replace(t, @"\s*\n\s*", " ");
+            return Regex.Replace(t, @"\s{2,}", " ").Trim();
         }
 
         private static bool TryAssignTriple(string[] parts, ref LLMStandardResponse ret)
@@ -202,6 +320,13 @@ namespace AIChat.Utils
             }
 
             string legacy = tagPart.Replace("[", "").Replace("]", "").Trim();
+            // モデルが「thoại: Sad」等の接頭辞付きラベルを出したとき末尾の英単語タグだけ採用（ActionAnimMap 不一致を防ぐ）
+            if (legacy.IndexOf(':') >= 0)
+            {
+                Match mColon = Regex.Match(legacy, @":\s*(\w+)\s*$");
+                if (mColon.Success)
+                    legacy = mColon.Groups[1].Value;
+            }
             ret.EmotionTag = MapLegacyTag(legacy);
         }
 
@@ -246,6 +371,10 @@ namespace AIChat.Utils
             {
                 Log.Info("[LiveContext] 本次未生成任何实时上下文（Game/Pomodoro 未连接？）");
             }
+
+            int sysChars = (finalSystemPrompt ?? string.Empty).Length;
+            int ragChars = (requestContext.ReferenceSnippets ?? string.Empty).Length;
+            Log.Info($"[LLM] 拼接后 system 约 {sysChars} 字（其中 RAG 块约 {ragChars} 字）；越长推理略慢，可对照此数做精简。");
 
             // 【集成 RAG】将检索到的参考语境追加到 system prompt 末尾
             if (!string.IsNullOrEmpty(requestContext.ReferenceSnippets))
