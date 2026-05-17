@@ -33,6 +33,8 @@ namespace AIChat.Unity
 
         /// <summary>与 <c>CursorService</c> 相同：在 HeroineService 实例上调用 <c>IsPossibleClickHeroineReaction()</c>。</summary>
         private static MethodInfo _heroineServiceIsPossibleClickReactionMethod;
+        private static MethodInfo _heroineServiceGetCurrentAIStateMethod;
+        private static MethodInfo _heroineServiceGetHeroineUpdateStateTypeMethod;
 
         private static MonoBehaviour _heroineAI;
         private static FieldInfo _actionStateMachineField;
@@ -44,7 +46,6 @@ namespace AIChat.Unity
         private static int _lastCancelVoiceFrame;
         private static int _lastVoiceScenarioSearchFrame;
         private static int _lastCancelNativeVoiceAudioFrame;
-        private static int _lastHeroineAiProbeFrame = -1000;
 
         // 番茄钟服务（实时上下文注入用）
         private static object _pomodoroService;
@@ -95,8 +96,9 @@ namespace AIChat.Unity
                 foreach (var mb in _heroineService.GetComponentsInChildren<MonoBehaviour>(true))
                 {
                     if (mb == null) continue;
-                    string fn = mb.GetType().FullName;
-                    if (fn == "Bulbul.HeroineAI" || (fn != null && fn.EndsWith(".HeroineAI", StringComparison.Ordinal)))
+                    Type mbt = mb.GetType();
+                    string fn = mbt.FullName;
+                    if (fn == "Bulbul.HeroineAI" || mbt.Name == "HeroineAI" || (fn != null && fn.EndsWith(".HeroineAI", StringComparison.Ordinal)))
                     {
                         CacheHeroineAIReflectionTargets(mb);
                         Log.Info($"[GameBridge] HeroineAI 已由 HeroineService 层级补全: {mb.gameObject.name}");
@@ -111,6 +113,62 @@ namespace AIChat.Unity
         }
 
         /// <summary>
+        /// 与光标/CursorService、点击/FacilityClickHeroine 使用 **同一** VContainer 注入的 HeroineService。
+        /// 仅用 FindObjectsOfType 时可能先扫到场景里另一个 HeroineService（或顺序错误），导致 IsPossibleClickHeroineReaction 永远为 true。
+        /// </summary>
+        private static void RebindHeroineService(MonoBehaviour comp, string reason)
+        {
+            if (comp == null) return;
+            if (_heroineService == comp) return;
+
+            _heroineService = comp;
+            _cachedAnimator = comp.GetComponent<Animator>();
+            Type hst = comp.GetType();
+            _changeAnimSmoothMethod = hst.GetMethod("ChangeHeroineAnimationForInteger", BindingFlags.Public | BindingFlags.Instance);
+            _lookInitMethod = hst.GetMethod("LookInitSlowly", BindingFlags.Public | BindingFlags.Instance);
+            _lookAtMethod = hst.GetMethod("ChangeLookScaleAnimation", BindingFlags.Public | BindingFlags.Instance);
+            _cancelVoiceMethod = hst.GetMethod("CancelVoice", BindingFlags.Public | BindingFlags.Instance);
+            _heroineServiceIsPossibleClickReactionMethod = hst.GetMethod(
+                "IsPossibleClickHeroineReaction",
+                BindingFlags.Public | BindingFlags.Instance);
+            _heroineServiceGetCurrentAIStateMethod = hst.GetMethod("GetCurrentAIState", BindingFlags.Public | BindingFlags.Instance);
+            _heroineServiceGetHeroineUpdateStateTypeMethod = hst.GetMethod("GetHeroineUpdateStateType", BindingFlags.Public | BindingFlags.Instance);
+            if (_heroineServiceIsPossibleClickReactionMethod != null)
+                Log.Info($"[GameBridge] HeroineService 已绑定 ({reason}): {comp.gameObject.name}，门控方法与游戏同源");
+            else
+                Log.Warning($"[GameBridge] HeroineService 已绑定但缺少 IsPossibleClickHeroineReaction ({reason})");
+
+            if (_changeAnimSmoothMethod != null)
+                Log.Warning($"✅ 核心连接成功: {comp.gameObject.name} ({reason})");
+        }
+
+        /// <summary>从 RoomGameManager 的注入字段覆盖 <see cref="_heroineService"/>，保证与原生交互同一实例。</summary>
+        private static void ApplyInjectedHeroineServiceFromRoomGameManager(MonoBehaviour roomGameManager)
+        {
+            if (roomGameManager == null) return;
+            try
+            {
+                FieldInfo field = roomGameManager.GetType().GetField("_heroineService", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field == null)
+                {
+                    foreach (var f in roomGameManager.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+                    {
+                        if (f.FieldType.Name == "HeroineService") { field = f; break; }
+                    }
+                }
+                if (field == null) return;
+
+                object svcObj = field.GetValue(roomGameManager);
+                if (svcObj is MonoBehaviour svcMb && svcMb != null)
+                    RebindHeroineService(svcMb, "RoomGameManager._heroineService");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] ApplyInjectedHeroineServiceFromRoomGameManager: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// 扫描场景，把还没缓存的反射对象一次性补齐。即使 HeroineService 已经在了，也会继续找 HeroineAI / PomodoroService / FacilityClickHeroine。
         /// </summary>
         public static void FindHeroineService()
@@ -119,41 +177,31 @@ namespace AIChat.Unity
             foreach (var comp in allComponents)
             {
                 string typeName = comp.GetType().FullName;
-                if (typeName == "Bulbul.HeroineService" && _heroineService == null)
+                bool looksLikeHeroineService = typeName == "Bulbul.HeroineService"
+                    || (comp.GetType().Name == "HeroineService" && typeName != null && typeName.IndexOf("HeroineService", StringComparison.Ordinal) >= 0);
+                if (looksLikeHeroineService && _heroineService == null)
                 {
-                    _heroineService = comp;
-                    _cachedAnimator = comp.GetComponent<Animator>();
-
-                    Type hst = comp.GetType();
-                    _changeAnimSmoothMethod = hst.GetMethod("ChangeHeroineAnimationForInteger", BindingFlags.Public | BindingFlags.Instance);
-                    _lookInitMethod = hst.GetMethod("LookInitSlowly", BindingFlags.Public | BindingFlags.Instance);
-                    _lookAtMethod = hst.GetMethod("ChangeLookScaleAnimation", BindingFlags.Public | BindingFlags.Instance);
-                    _cancelVoiceMethod = hst.GetMethod("CancelVoice", BindingFlags.Public | BindingFlags.Instance);
-                    _heroineServiceIsPossibleClickReactionMethod = hst.GetMethod(
-                        "IsPossibleClickHeroineReaction",
-                        BindingFlags.Public | BindingFlags.Instance);
-                    if (_heroineServiceIsPossibleClickReactionMethod != null)
-                        Log.Info("[GameBridge] HeroineService.IsPossibleClickHeroineReaction 已缓存（与光标/点击同源门控）");
-                    else
-                        Log.Warning("[GameBridge] HeroineService.IsPossibleClickHeroineReaction 未找到");
-
-                    if (_changeAnimSmoothMethod != null) Log.Warning($"✅ 核心连接成功: {comp.gameObject.name}");
+                    RebindHeroineService(comp, "场景扫描首实例");
                 }
-                else if (typeName == "Bulbul.HeroineAI" && _heroineAI == null)
+                else if ((typeName == "Bulbul.HeroineAI" || comp.GetType().Name == "HeroineAI") && _heroineAI == null)
                 {
                     CacheHeroineAIReflectionTargets(comp);
                 }
-                else if (typeName == "Bulbul.RoomGameManager")
+                else if (typeName == "Bulbul.RoomGameManager" || comp.GetType().Name == "RoomGameManager")
                 {
                     if (_facilityVoiceTextScenario == null) CacheFacilityVoiceTextScenario(comp);
                     if (_facilityClickHeroine == null) CacheFacilityClickHeroine(comp);
                     if (_roomGameManager == null) CacheRoomGameManagerForTouchReaction(comp);
+                    else ApplyInjectedHeroineServiceFromRoomGameManager(comp);
                 }
                 else if (typeName == "Bulbul.FacilityClickHeroine" && _facilityClickHeroine == null)
                 {
                     CacheFacilityClickHeroineFromInstance(comp);
                 }
             }
+
+            if (_roomGameManager != null)
+                ApplyInjectedHeroineServiceFromRoomGameManager(_roomGameManager);
 
             TryCacheHeroineAIFromHeroineServiceHierarchy();
 
@@ -233,6 +281,7 @@ namespace AIChat.Unity
             try
             {
                 _roomGameManager = roomGameManager;
+                ApplyInjectedHeroineServiceFromRoomGameManager(roomGameManager);
                 _playHeroineTouchReactionMethod = roomGameManager.GetType().GetMethod(
                     "PlayHeroineTouchReaction",
                     BindingFlags.Public | BindingFlags.Instance);
@@ -268,85 +317,73 @@ namespace AIChat.Unity
             catch { return false; }
         }
 
-        /// <summary>
-        /// 与游戏内「能否点女主 / 禁止光标」同源：优先调用 <c>HeroineService.IsPossibleClickHeroineReaction()</c>（同 <c>CursorService</c>）。
-        /// 在能通过时再要求 <c>HeroineAI.CurrentUpdateState == Idle</c>，堵住 <c>StartNextActionReady</c> 已排队尚未 Dispatch 的窗口。
-        /// 已存在 <c>HeroineService</c> 时反射失败一律视为不可输入（fail-closed），避免游戏里已禁止、mod 仍放行。
-        /// </summary>
-        public static bool IsHeroineClickReactionPossible()
+        /// <summary>补齐 HeroineService 上读取状态所需的反射（绑定顺序不保证已执行 Rebind）。</summary>
+        private static void EnsureHeroineServiceStateQueryMethods()
         {
+            if (_heroineService == null) return;
+            Type t = _heroineService.GetType();
+            if (_heroineServiceIsPossibleClickReactionMethod == null)
+                _heroineServiceIsPossibleClickReactionMethod = t.GetMethod("IsPossibleClickHeroineReaction", BindingFlags.Public | BindingFlags.Instance);
+            if (_heroineServiceGetCurrentAIStateMethod == null)
+                _heroineServiceGetCurrentAIStateMethod = t.GetMethod("GetCurrentAIState", BindingFlags.Public | BindingFlags.Instance);
+            if (_heroineServiceGetHeroineUpdateStateTypeMethod == null)
+                _heroineServiceGetHeroineUpdateStateTypeMethod = t.GetMethod("GetHeroineUpdateStateType", BindingFlags.Public | BindingFlags.Instance);
+        }
+
+        /// <summary>
+        /// 与 mod「发送」按钮同逻辑：只要游戏侧女主不应被打扰，就视为忙（与「原生语音时灰掉发送」一致）。
+        /// 使用_roomGameManager 注入的 <see cref="_heroineService"/>，并同时检查 IsPossible、管线 Idle、以及开窗等状态键。
+        /// </summary>
+        public static bool IsModSendBlockedByHeroine()
+        {
+            if (IsNativeClickHeroineBusy()) return true;
+            if (_heroineService == null) return false;
+
             try
             {
-                if (_heroineService != null && _heroineAI == null && Time.frameCount - _lastHeroineAiProbeFrame >= 12)
+                EnsureHeroineServiceStateQueryMethods();
+                if (_heroineServiceIsPossibleClickReactionMethod == null)
+                    return true;
+
+                object rSvc = _heroineServiceIsPossibleClickReactionMethod.Invoke(_heroineService, null);
+                if (rSvc is bool ok && !ok) return true;
+
+                if (_heroineServiceGetHeroineUpdateStateTypeMethod != null)
                 {
-                    _lastHeroineAiProbeFrame = Time.frameCount;
-                    TryCacheHeroineAIFromHeroineServiceHierarchy();
+                    object u = _heroineServiceGetHeroineUpdateStateTypeMethod.Invoke(_heroineService, null);
+                    if (u != null && Convert.ToInt32(u) != 0)
+                        return true;
                 }
 
-                if (_heroineService != null)
+                if (_heroineServiceGetCurrentAIStateMethod != null)
                 {
-                    if (_heroineServiceIsPossibleClickReactionMethod == null)
-                    {
-                        _heroineServiceIsPossibleClickReactionMethod = _heroineService.GetType().GetMethod(
-                            "IsPossibleClickHeroineReaction",
-                            BindingFlags.Public | BindingFlags.Instance);
-                    }
-                    if (_heroineServiceIsPossibleClickReactionMethod == null)
-                    {
-                        Log.Warning("[GameBridge] IsHeroineClickReactionPossible: HeroineService 上缺少 IsPossibleClickHeroineReaction，暂禁止 mod 输入");
-                        return false;
-                    }
-                    object rSvc;
-                    try
-                    {
-                        rSvc = _heroineServiceIsPossibleClickReactionMethod.Invoke(_heroineService, null);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Warning($"[GameBridge] IsPossibleClickHeroineReaction 调用失败，禁止 mod 输入: {ex.Message}");
-                        return false;
-                    }
-                    if (!(rSvc is bool svcOk) || !svcOk)
-                        return false;
-                }
-                else
-                {
-                    if (_heroineAI == null) return true;
-                    if (_heroineAiIsPossibleClickReactionMethod == null)
-                    {
-                        _heroineAiIsPossibleClickReactionMethod = _heroineAI.GetType().GetMethod(
-                            "IsPossibleClickHeroineReaction",
-                            BindingFlags.Public | BindingFlags.Instance);
-                    }
-                    if (_heroineAiIsPossibleClickReactionMethod == null) return true;
-                    object rAi = _heroineAiIsPossibleClickReactionMethod.Invoke(_heroineAI, null);
-                    if (!(rAi is bool aiOk) || !aiOk)
-                        return false;
+                    object st = _heroineServiceGetCurrentAIStateMethod.Invoke(_heroineService, null);
+                    if (st != null && IsHeroineActionStateKeyAlwaysBlocksModSend(Convert.ToInt32(st)))
+                        return true;
                 }
 
-                if (_heroineAI == null) return true;
-                if (_heroineAiCurrentUpdateStateProperty == null)
-                {
-                    _heroineAiCurrentUpdateStateProperty = _heroineAI.GetType().GetProperty(
-                        "CurrentUpdateState",
-                        BindingFlags.Public | BindingFlags.Instance);
-                }
-                if (_heroineAiCurrentUpdateStateProperty == null) return true;
-                object updateSt = _heroineAiCurrentUpdateStateProperty.GetValue(_heroineAI);
-                if (updateSt == null) return true;
-                int ord = Convert.ToInt32(updateSt);
-                return ord == 0;
+                return false;
             }
             catch (Exception ex)
             {
-                if (_heroineService != null)
-                {
-                    Log.Warning($"[GameBridge] IsHeroineClickReactionPossible 异常，禁止 mod 输入: {ex.Message}");
-                    return false;
-                }
+                Log.Warning($"[GameBridge] IsModSendBlockedByHeroine: {ex.Message}");
                 return true;
             }
         }
+
+        /// <summary>与游戏各状态 <c>IsPossibleClickReaction==false</c> 对齐的 ActionStateType 键；防止单看 bool 时漏判。</summary>
+        private static bool IsHeroineActionStateKeyAlwaysBlocksModSend(int stateKey)
+        {
+            if (stateKey >= 4 && stateKey <= 15) return true;
+            if (stateKey == 25 || stateKey == 26) return true;
+            if (stateKey >= 0 && stateKey <= 2) return true;
+            if (stateKey == 27) return true;
+            if (stateKey == 10000) return true;
+            return false;
+        }
+
+        /// <summary>语义同 <c>!IsModSendBlockedByHeroine()</c>，供旧代码与 <c>CallNativeChangeAnim</c> 双检使用。</summary>
+        public static bool IsHeroineClickReactionPossible() => !IsModSendBlockedByHeroine();
 
         public static bool TriggerNativeFocusTouchReaction()
         {

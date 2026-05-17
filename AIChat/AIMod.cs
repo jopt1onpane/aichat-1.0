@@ -978,13 +978,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             // === 对话区域 ===
             GUILayout.Space(10);
             GUILayout.Label("<b>与聪音对话：</b>");
-            if (GameBridge.IsNativeClickHeroineBusy() && !_isProcessing)
+            bool blockModSendByGame = !_isProcessing && GameBridge.IsModSendBlockedByHeroine();
+            if (blockModSendByGame)
             {
-                GUILayout.Label("<color=#cccccc>（角色原生短对话/独白播放中，请播完后再用 mod 发送）</color>");
-            }
-            else if (!GameBridge.IsHeroineClickReactionPossible() && !_isProcessing)
-            {
-                GUILayout.Label("<color=#cccccc>（角色正在做动作，与原生「不可点女主」一致，请结束后再用 mod 发送）</color>");
+                GUILayout.Label("<color=#cccccc>（与游戏内一致：女主正忙——原生语音/独白，或动作未结束；发送与录音已暂时关闭）</color>");
             }
 
             GUI.backgroundColor = Color.white;
@@ -1004,9 +1001,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             Event keyEvent = Event.current;
             bool shouldSendMessage = false;
             
-            // 与原生对齐：短对话/独白占线，或 HeroineAI.IsPossibleClickHeroineReaction==false（伸懒腰、无语音 Wild、过渡动作等）
-            bool blockSendForNative = !_isProcessing
-                && (GameBridge.IsNativeClickHeroineBusy() || !GameBridge.IsHeroineClickReactionPossible());
+            // 与「原生语音播放时灰掉发送」同一布尔：女主忙则禁止输入（IsPossible / 管线非 Idle / 开窗等状态键）
+            bool blockSendForNative = !_isProcessing && GameBridge.IsModSendBlockedByHeroine();
             if (keyEvent.type == EventType.KeyDown && 
                 keyEvent.keyCode == KeyCode.Return && 
                 !_isProcessing &&
@@ -1048,8 +1044,9 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             // 使用 GUILayout.Width(singleBtnWidth) 强制固定宽度
             string sendLabel = _isProcessing
                 ? "处理中"
-                : (GameBridge.IsNativeClickHeroineBusy() ? "角色说话中"
-                    : (!GameBridge.IsHeroineClickReactionPossible() ? "角色动作中" : "发送"));
+                : (blockSendForNative
+                    ? (GameBridge.IsNativeClickHeroineBusy() ? "角色说话中" : "角色动作中")
+                    : "发送");
             if (GUILayout.Button(sendLabel, GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
             {
                 if (!string.IsNullOrEmpty(_playerInput) && !sendLocked)
@@ -1207,18 +1204,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 yield break;
             }
 
-            // 原生短反应占线时拒绝启动 mod（与游戏「点一次 → 播完再点」对齐）
-            if (GameBridge.IsNativeClickHeroineBusy())
+            // 游戏内女主忙（含语音/动作）：拒绝启动 mod
+            if (GameBridge.IsModSendBlockedByHeroine())
             {
-                Log.Warning("[交互] 角色正在原生短对话/独白流程中，请等说完或动画结束后再用 mod 发送。");
-                _isProcessing = false;
-                yield break;
-            }
-
-            // 与 HeroineAI.IsPossibleClickHeroineReaction 对齐：无语音 Wild/过渡/番茄动作等未结束前禁止 mod（防动作闪现打断）
-            if (!GameBridge.IsHeroineClickReactionPossible())
-            {
-                Log.Warning("[交互] 角色正在原生动作中（此时不可点女主），请结束后再用 mod 发送。");
+                Log.Warning("[交互] 游戏内女主正忙（原生语音/独白或动作中），请稍候再发送。");
                 _isProcessing = false;
                 yield break;
             }
@@ -1912,6 +1901,13 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
         /// </summary>
         IEnumerator ASRWorkflow(byte[] wavData)
         {
+            GameBridge.EnsureCachesReady("ASRWorkflow.Entry");
+            if (GameBridge.IsModSendBlockedByHeroine())
+            {
+                Log.Warning("[交互] 语音输入：当前女主正忙，已取消。");
+                yield break;
+            }
+
             _isProcessing = true; // 锁定 UI
             string recognizedResult = "";
 
