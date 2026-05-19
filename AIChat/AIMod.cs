@@ -111,6 +111,8 @@ namespace ChillAIMod
         private bool _isResizing = false; // 新增：拖拽调整大小状态
 
         private Process _launchedTTSProcess;
+        private bool _modAttemptedLaunchTts;
+        private bool _ttsShutdownDone;
         private bool _isTTSServiceReady = false;
         private Coroutine _ttsHealthCheckCoroutine;
         private const float TTSHealthCheckInterval = 5f; // 每5秒检查一次
@@ -339,6 +341,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
         void Awake()
         {
             Log.Init(this.Logger);
+            Application.quitting += OnGameQuitting;
             DontDestroyOnLoad(this.gameObject);
             this.gameObject.hideFlags = HideFlags.HideAndDontSave;
             _audioSource = this.gameObject.AddComponent<AudioSource>();
@@ -521,6 +524,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                         };
                     }
                     _launchedTTSProcess = Process.Start(startInfo);
+                    _modAttemptedLaunchTts = true;
                     Log.Info("已启动 TTS 服务");
                 }
                 catch (Exception ex)
@@ -2034,34 +2038,76 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 _isProcessing = false; // 如果识别失败，在这里解锁 UI
             }
         }
-        void OnApplicationQuit()
+        void OnDestroy()
         {
-            Log.Info("[Chill AI Mod] 退出中...");
-            
-            // 【保存记忆系统】
+            Application.quitting -= OnGameQuitting;
+            StopTtsServiceIfNeeded();
+        }
+
+        void OnApplicationQuit() => OnGameQuitting();
+
+        private void OnGameQuitting()
+        {
+            Log.Info("[Chill AI Mod] 退出中…");
+
             if (_hierarchicalMemory != null && _experimentalMemoryConfig.Value)
             {
-                Log.Info("[HierarchicalMemory] 正在保存记忆...");
+                Log.Info("[HierarchicalMemory] 正在保存记忆…");
                 _hierarchicalMemory.SaveToFile();
             }
-            
-            Log.Info("[Chill AI Mod] 正在停止TTS轮询...");
+
+            StopTtsServiceIfNeeded();
+        }
+
+        private int GetTtsListenPort()
+        {
+            try
+            {
+                var uri = new Uri((_sovitsUrlConfig?.Value ?? "http://127.0.0.1:9880").Trim());
+                if (uri.Port > 0) return uri.Port;
+            }
+            catch { }
+            return 9880;
+        }
+
+        /// <summary>
+        /// 游戏退出时关闭 Mod 拉起的 TTS（含 VBS→cmd 控制台与 python 监听进程）。
+        /// </summary>
+        private void StopTtsServiceIfNeeded()
+        {
+            if (_ttsShutdownDone) return;
+            _ttsShutdownDone = true;
+
             if (_ttsHealthCheckCoroutine != null)
             {
                 StopCoroutine(_ttsHealthCheckCoroutine);
                 _ttsHealthCheckCoroutine = null;
             }
-            if (_quitTTSServiceOnQuitConfig.Value && _launchedTTSProcess != null && !_launchedTTSProcess.HasExited)
-            {   
-                try
-                {
+
+            if (!_quitTTSServiceOnQuitConfig.Value)
+            {
+                Log.Info("[TTS Cleanup] QuitTTSServiceOnQuit=false，跳过关闭 TTS");
+                return;
+            }
+
+            if (!_modAttemptedLaunchTts && !_isTTSServiceReady)
+            {
+                Log.Info("[TTS Cleanup] 本局未由 Mod 启动/使用 TTS，跳过关闭");
+                return;
+            }
+
+            try
+            {
+                if (_launchedTTSProcess != null && !_launchedTTSProcess.HasExited)
                     ProcessHelper.KillProcessTree(_launchedTTSProcess);
-                    Log.Info("TTS 服务已关闭");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning($"关闭 TTS 服务时出错: {ex.Message}");
-                }
+
+                ProcessHelper.StopChillModTtsService(GetTtsListenPort());
+                _isTTSServiceReady = false;
+                Log.Info("[TTS Cleanup] 已请求关闭 TTS 服务与相关控制台");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[TTS Cleanup] 关闭 TTS 时出错: {ex.Message}");
             }
         }
         
