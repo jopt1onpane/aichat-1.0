@@ -40,6 +40,9 @@ namespace ChillAIMod
         private ConfigEntry<bool> _quitTTSServiceOnQuitConfig;
         private ConfigEntry<bool> _audioPathCheckConfig;
         private ConfigEntry<bool> _japaneseCheckConfig;
+        private ConfigEntry<string> _gptSovitsPortableRootConfig;
+        private ConfigEntry<int> _ttsSampleStepsConfig;
+        private ConfigEntry<bool> _ttsIfSrConfig;
 
         // --- 新增窗口大小配置 ---
         private ConfigEntry<float> _windowWidthConfig;
@@ -368,17 +371,34 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _dailyStoryTimeoutConfig = Config.Bind("9. Advanced (hidden)", "DailyStoryTimeoutSeconds", 30f,
                 "今日素材生成的网络超时秒数（30s 通常足够；本地 Ollama 冷启动建议调大到 90s）。");
 
+            string aiChatPluginDir = Path.Combine(BepInEx.Paths.PluginPath, "AIChat");
+
             // --- TTS 配置 ---
             _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "TTS 服务 URL");
-            _TTSServicePathConfig = Config.Bind("2. TTS", "TTS_Service_Script_Path", @"D:\GPT-SoVITS\GPT-SoVITS-v2pro-20250604-nvidia50\run_api.bat", "TTS 服务脚本文件路径");
+            _gptSovitsPortableRootConfig = Config.Bind(
+                "2. TTS",
+                "GptSovits_Portable_Root",
+                Path.Combine(aiChatPluginDir, "ChillTTSBundle"),
+                "Chill TTS 根目录（含 runtime、权重、bridge、manifest.json）。默认：本插件目录下 ChillTTSBundle。仍可用外部绝对路径作开发调试。");
+            _TTSServicePathConfig = Config.Bind(
+                "2. TTS",
+                "TTS_Service_Script_Path",
+                Path.Combine(aiChatPluginDir, "Run_ChillTTSLauncher.vbs"),
+                "TTS 启动器：推荐 Run_ChillTTSLauncher.vbs（从 cfg GptSovits_Portable_Root 下启动 ChillTTSLauncher.bat）。旧版便携可调 Run_ChillMod_TTS.vbs。");
             _LaunchTTSServiceConfig = Config.Bind("2. TTS", "LaunchTTSService", true, "启动时自动运行 TTS 服务");
             _quitTTSServiceOnQuitConfig = Config.Bind("2. TTS", "QuitTTSServiceOnQuit", true, "退出时自动关闭 TTS 服务");
-            _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"Voice_MainScenario_27_016.wav", "GSV 访问音频文件的路径（可以是相对路径）");
-            _audioPathCheckConfig = Config.Bind("2. TTS", "AudioPathCheck", false, "从 Mod 侧检测音频文件路径");
+            _refAudioPathConfig = Config.Bind(
+                "2. TTS",
+                "Audio_File_Path",
+                Path.Combine(aiChatPluginDir, "tts_ref.wav"),
+                "参考音频路径（3–10s），须与「音频文件台词」一致");
+            _audioPathCheckConfig = Config.Bind("2. TTS", "AudioPathCheck", true, "从 Mod 侧检测参考音频是否存在（可回退 tts_ref.wav / Voice.wav）");
             _promptTextConfig = Config.Bind("2. TTS", "Audio_File_Text", "君が集中した時のシータ波を検出して、リンクをつなぎ直せば元通りになるはず。", "音频文件台词");
             _promptLangConfig = Config.Bind("2. TTS", "PromptLang", "ja", "音频文件语言 (prompt_lang)");
             _targetLangConfig = Config.Bind("2. TTS", "TargetLang", "ja", "合成语音语言 (text_lang)");
             _japaneseCheckConfig = Config.Bind("2. TTS", "JapaneseCheck", true, "检测合成语音文本是否为日文（当合成语音语言为 ja 时可防止发出怪声）");
+            _ttsSampleStepsConfig = Config.Bind("2. TTS", "TTS_SampleSteps", 32, "v3 推理 sample_steps（建议 16–32）");
+            _ttsIfSrConfig = Config.Bind("2. TTS", "TTS_SuperResolution", true, "v3 是否启用超分 if_sr（更亮一些，略慢）");
             _voiceVolumeConfig = Config.Bind("2. TTS", "VoiceVolume", 1.0f, "语音音量 (0.0 - 1.0)");
 
             // --- 界面配置 ---
@@ -438,16 +458,68 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _tempWidthString = _windowWidthConfig.Value.ToString("F0");
             _tempHeightString = _windowHeightConfig.Value.ToString("F0");
             _tempVolumeString = _voiceVolumeConfig.Value.ToString("F2");
-            string cleanPath = _TTSServicePathConfig.Value.Replace("\"", "").Trim();
-            if (_LaunchTTSServiceConfig.Value && File.Exists(_TTSServicePathConfig.Value))
+            string portableRoot = _gptSovitsPortableRootConfig.Value;
+            if (!string.IsNullOrWhiteSpace(portableRoot))
             {
                 try
                 {
-                    ProcessStartInfo startInfo = new ProcessStartInfo(cleanPath)
+                    portableRoot = portableRoot.Trim().Trim('"', ' ', '\t');
+                    portableRoot = Path.GetFullPath(portableRoot);
+                    Environment.SetEnvironmentVariable("CHILL_GSV_HOME", portableRoot);
+                    Log.Info($"[TTS] CHILL_GSV_HOME={portableRoot}");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[TTS] 设置 CHILL_GSV_HOME 失败: {ex.Message}");
+                }
+            }
+            else
+            {
+                Environment.SetEnvironmentVariable("CHILL_GSV_HOME", null);
+            }
+
+            string cleanPath = _TTSServicePathConfig.Value.Replace("\"", "").Trim();
+            if (_LaunchTTSServiceConfig.Value && File.Exists(cleanPath))
+            {
+                try
+                {
+                    string ext = Path.GetExtension(cleanPath) ?? "";
+                    ProcessStartInfo startInfo;
+                    if (ext.Equals(".ps1", StringComparison.OrdinalIgnoreCase))
                     {
-                        UseShellExecute = true,
-                        WorkingDirectory = Path.GetDirectoryName(cleanPath)
-                    };
+                        startInfo = new ProcessStartInfo
+                        {
+                            FileName = "powershell.exe",
+                            Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + cleanPath + "\"",
+                            WorkingDirectory = Path.GetDirectoryName(cleanPath) ?? "",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                    }
+                    else if (ext.Equals(".bat", StringComparison.OrdinalIgnoreCase)
+                             || ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string wd = Path.GetDirectoryName(cleanPath) ?? "";
+                        string cmdExe = Environment.GetEnvironmentVariable("ComSpec");
+                        if (string.IsNullOrEmpty(cmdExe))
+                            cmdExe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+                        startInfo = new ProcessStartInfo
+                        {
+                            FileName = cmdExe,
+                            Arguments = "/c start \"\" \"" + cleanPath + "\"",
+                            WorkingDirectory = wd,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                    }
+                    else
+                    {
+                        startInfo = new ProcessStartInfo(cleanPath)
+                        {
+                            UseShellExecute = true,
+                            WorkingDirectory = Path.GetDirectoryName(cleanPath) ?? ""
+                        };
+                    }
                     _launchedTTSProcess = Process.Start(startInfo);
                     Log.Info("已启动 TTS 服务");
                 }
@@ -794,6 +866,18 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                     GUILayout.Label("TTS 服务脚本文件路径：");
                     _TTSServicePathConfig.Value = GUILayout.TextField(_TTSServicePathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
 
+                    GUILayout.Label("GPT-SoVITS v3 便携包根（写入 CHILL_GSV_HOME，与 webui 同级）：");
+                    _gptSovitsPortableRootConfig.Value = GUILayout.TextField(_gptSovitsPortableRootConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("v3 sample_steps：", GUILayout.Width(140f));
+                    string stepStr = GUILayout.TextField(_ttsSampleStepsConfig.Value.ToString(), GUILayout.Height(elementHeight), GUILayout.Width(60f));
+                    if (int.TryParse(stepStr, out int steps))
+                        _ttsSampleStepsConfig.Value = Mathf.Clamp(steps, 4, 64);
+                    GUILayout.EndHorizontal();
+
+                    _ttsIfSrConfig.Value = GUILayout.Toggle(_ttsIfSrConfig.Value, "v3 超分 if_sr", GUILayout.Height(elementHeight));
+
                     GUILayout.Space(5);
                     _LaunchTTSServiceConfig.Value = GUILayout.Toggle(_LaunchTTSServiceConfig.Value, "启动时自动运行 TTS 服务", GUILayout.Height(elementHeight));
                     _quitTTSServiceOnQuitConfig.Value = GUILayout.Toggle(_quitTTSServiceOnQuitConfig.Value, "退出时自动关闭 TTS 服务", GUILayout.Height(elementHeight));
@@ -1138,6 +1222,22 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             {
                 GUI.DragWindow();
             }
+        }
+
+        /// <summary>将 TTS/动画 clip 按原生 Voice 轨播放；混音未就绪则不播放。</summary>
+        private bool TryPlayModVoiceClip(AudioClip clip)
+        {
+            if (clip == null || _audioSource == null) return false;
+            float userVol = _audioSource.volume;
+            _audioSource.clip = clip;
+            clip.LoadAudioData();
+            if (!GameBridge.ApplyNativeVoiceMixToMod(_audioSource, userVol))
+            {
+                Log.Error("[混音] 失败：未接入 VoiceGroup，本段 Mod 语音不播放");
+                return false;
+            }
+            _audioSource.Play();
+            return true;
         }
 
         /// <summary>第三块缺失、或与日语相同、或几乎不含汉字时，避免把日语误当中文显示。</summary>
@@ -1495,8 +1595,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                             GameBridge.CancelNativeVoiceAudio(true);
                             Log.Info($"[同步] SubtitleShow+VoiceStart t={Time.realtimeSinceStartup - pipelineStart:F2}s clipLength={downloadedClip.length:F2}s subtitle=\"{subtitleText}\" (jaLen={voiceText?.Length ?? 0})");
                             _isAISpeaking = true;
-                            _audioSource.clip = downloadedClip;
-                            _audioSource.Play();
+                            if (!TryPlayModVoiceClip(downloadedClip))
+                                Log.Warning("[TTS] 混音未就绪，本段仅字幕");
 
                             yield return new WaitForSecondsRealtime(downloadedClip.length + 0.5f);
 
@@ -1645,8 +1745,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                     GameBridge.CancelNativeVoiceAudio(true);
                     Log.Info($"[同步] PreparedSubtitleShow+VoiceStart t={Time.realtimeSinceStartup - pipelineStart:F2}s clipLength={downloadedClip.length:F2}s text=\"{voiceText}\"");
                     _isAISpeaking = true;
-                    _audioSource.clip = downloadedClip;
-                    _audioSource.Play();
+                    if (!TryPlayModVoiceClip(downloadedClip))
+                        Log.Warning("[TTS] 混音未就绪，预置回复仅字幕");
 
                     yield return new WaitForSecondsRealtime(downloadedClip.length + 0.5f);
 
@@ -1700,7 +1800,9 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 (clip) => downloadedClip = clip,
                 1,
                 90f,
-                _audioPathCheckConfig.Value));
+                _audioPathCheckConfig.Value,
+                _ttsSampleStepsConfig.Value,
+                _ttsIfSrConfig.Value));
             onComplete?.Invoke(downloadedClip);
         }
 
@@ -1791,8 +1893,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 if (voiceClip != null)
                 {
                     _isAISpeaking = true;
-                    _audioSource.clip = voiceClip;
-                    _audioSource.Play();
+                    if (!TryPlayModVoiceClip(voiceClip))
+                        Log.Warning("[动画] 混音未就绪，已跳过配音");
                     yield return new WaitForSecondsRealtime(voiceClip.length + 0.5f);
                     _isAISpeaking = false;
                 }
@@ -1817,8 +1919,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             if (voiceClip != null)
             {
                 _isAISpeaking = true;
-                _audioSource.clip = voiceClip;
-                _audioSource.Play();
+                if (!TryPlayModVoiceClip(voiceClip))
+                    Log.Warning("[动画] 混音未就绪，已跳过配音");
             }
 
             int animID;

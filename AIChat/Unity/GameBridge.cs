@@ -1,4 +1,5 @@
 ﻿using AIChat.Utils;
+using KanKikuchi.AudioManager;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Animations;
+using UnityEngine.Audio;
 
 namespace AIChat.Unity
 {
@@ -62,6 +64,17 @@ namespace AIChat.Unity
         private static FieldInfo _clickHeroineMainStateField; // MainState: Idle=0, ReadyReaction, PlayingReaction, EndPlayReaction
         private static MonoBehaviour _roomGameManager;
         private static MethodInfo _playHeroineTouchReactionMethod;
+
+        /// <summary>与 <see cref="VoiceManager"/> 相同的 Voice 混音组（KanKikuchi 优先，Bulbul 兜底）。</summary>
+        private static AudioMixerGroup _gameVoiceMixerGroupCache;
+
+        private static string _voiceGroupBindSource;
+
+        private static bool _loggedVoiceMixerBind;
+
+        private static bool _loggedVoiceMixerBindFail;
+
+        private static bool _loggedVoiceGroupSourceMismatch;
 
         private static readonly HashSet<string> _unsafeStates = new HashSet<string>
         {
@@ -189,6 +202,8 @@ namespace AIChat.Unity
                 }
                 else if (typeName == "Bulbul.RoomGameManager" || comp.GetType().Name == "RoomGameManager")
                 {
+                    TryGetVoiceGroupFromRoomGameManager(comp, out _);
+                    TryResolveNativeVoiceMixerGroup(out _);
                     if (_facilityVoiceTextScenario == null) CacheFacilityVoiceTextScenario(comp);
                     if (_facilityClickHeroine == null) CacheFacilityClickHeroine(comp);
                     if (_roomGameManager == null) CacheRoomGameManagerForTouchReaction(comp);
@@ -209,6 +224,144 @@ namespace AIChat.Unity
             if (_heroineAI != null && _pomodoroService == null)
             {
                 CachePomodoroServiceFromHeroineAI(_heroineAI);
+            }
+        }
+
+        /// <summary>
+        /// 将 Mod 语音接入与日常点击女主语音相同的混音轨（<c>VoiceManager</c> 使用的 <c>VoiceGroup</c>），并套用 <c>VoiceBaseVolume</c>。
+        /// 未就绪时返回 false，调用方不得 <c>Play()</c>。
+        /// </summary>
+        public static bool ApplyNativeVoiceMixToMod(AudioSource src, float userVolumeMultiplier)
+        {
+            if (src == null) return false;
+            if (!TryResolveNativeVoiceMixerGroup(out AudioMixerGroup voiceGroup))
+            {
+                if (!_loggedVoiceMixerBindFail)
+                {
+                    _loggedVoiceMixerBindFail = true;
+                    Log.Error("[混音] 失败：未取得 VoiceGroup（需游戏已完成 AssetLoad 且 AudioManagerSetting.Initialize）。");
+                }
+                return false;
+            }
+
+            src.outputAudioMixerGroup = voiceGroup;
+            float baseVol = GetNativeVoiceBaseVolume();
+            src.volume = Mathf.Clamp01(userVolumeMultiplier) * baseVol;
+            _loggedVoiceMixerBindFail = false;
+            if (!_loggedVoiceMixerBind)
+            {
+                _loggedVoiceMixerBind = true;
+                string groupName = voiceGroup != null ? voiceGroup.name : "?";
+                Log.Info($"[混音] 成功：Mod 语音已接入 VoiceGroup「{groupName}」（来源={_voiceGroupBindSource}，VoiceBaseVolume={baseVol:F2}）");
+            }
+            return true;
+        }
+
+        /// <inheritdoc cref="ApplyNativeVoiceMixToMod"/>
+        public static bool ApplyGameVoiceMixerGroupToMod(AudioSource src) =>
+            ApplyNativeVoiceMixToMod(src, src != null ? src.volume : 1f);
+
+        private static float GetNativeVoiceBaseVolume()
+        {
+            try
+            {
+                AudioManagerSetting setting = AudioManagerSetting.Entity;
+                if (setting != null)
+                    return setting.VoiceBaseVolume;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[混音] 读取 VoiceBaseVolume 失败: {ex.Message}");
+            }
+            return 1f;
+        }
+
+        private static bool TryResolveNativeVoiceMixerGroup(out AudioMixerGroup voiceGroup)
+        {
+            voiceGroup = null;
+            AudioMixerGroup kanKikuchi = null;
+            AudioMixerGroup bulbul = null;
+
+            try
+            {
+                AudioManagerSetting setting = AudioManagerSetting.Entity;
+                if (setting != null)
+                    kanKikuchi = setting.VoiceGroup;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[混音] 读取 AudioManagerSetting.Entity 失败: {ex.Message}");
+            }
+
+            bulbul = TryGetBulbulVoiceGroupFromRoomGameManager();
+
+            if (kanKikuchi != null)
+            {
+                voiceGroup = kanKikuchi;
+                _voiceGroupBindSource = "KanKikuchi.AudioManagerSetting";
+                _gameVoiceMixerGroupCache = kanKikuchi;
+            }
+            else if (bulbul != null)
+            {
+                voiceGroup = bulbul;
+                _voiceGroupBindSource = "Bulbul.AudioMixerGroupContainer";
+                _gameVoiceMixerGroupCache = bulbul;
+            }
+
+            if (kanKikuchi != null && bulbul != null && kanKikuchi != bulbul && !_loggedVoiceGroupSourceMismatch)
+            {
+                _loggedVoiceGroupSourceMismatch = true;
+                Log.Warning($"[混音] KanKikuchi VoiceGroup 与 Bulbul VoiceGroup 引用不一致（K={kanKikuchi.name}, B={bulbul.name}），已优先使用 KanKikuchi。");
+            }
+
+            return voiceGroup != null;
+        }
+
+        private static AudioMixerGroup TryGetBulbulVoiceGroupFromRoomGameManager()
+        {
+            if (_roomGameManager != null)
+            {
+                if (TryGetVoiceGroupFromRoomGameManager(_roomGameManager, out AudioMixerGroup grp))
+                    return grp;
+            }
+            foreach (var comp in UnityEngine.Object.FindObjectsOfType<MonoBehaviour>())
+            {
+                string typeName = comp.GetType().FullName;
+                if (typeName == "Bulbul.RoomGameManager" || comp.GetType().Name == "RoomGameManager")
+                {
+                    if (TryGetVoiceGroupFromRoomGameManager(comp, out AudioMixerGroup grp))
+                        return grp;
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        private static bool TryGetVoiceGroupFromRoomGameManager(MonoBehaviour roomGameManager, out AudioMixerGroup group)
+        {
+            group = null;
+            try
+            {
+                FieldInfo mixerField = roomGameManager.GetType().GetField("_audioMixer", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (mixerField == null)
+                {
+                    foreach (var f in roomGameManager.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+                    {
+                        if (f.FieldType.Name == "AudioMixerGroupContainer") { mixerField = f; break; }
+                    }
+                }
+                if (mixerField == null) return false;
+                object container = mixerField.GetValue(roomGameManager);
+                if (container == null) return false;
+                FieldInfo vgField = container.GetType().GetField("VoiceGroup", BindingFlags.Public | BindingFlags.Instance);
+                if (vgField == null) return false;
+                group = vgField.GetValue(container) as AudioMixerGroup;
+                return group != null;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[GameBridge] TryGetVoiceGroupFromRoomGameManager: {ex.Message}");
+                return false;
             }
         }
 

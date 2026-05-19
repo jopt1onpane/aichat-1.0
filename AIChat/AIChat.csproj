@@ -2,6 +2,8 @@
   <PropertyGroup>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <UnityDepsPath>$(MSBuildProjectDirectory)\..\build-resource\mokgamedir\\Chill With You_Data\Managed</UnityDepsPath>
+    <!-- 本机 Steam 安装目录（build-resource 无 AudioManager.dll 时使用） -->
+    <GameManagedPath>$(MSBuildProjectDirectory)\..\..\..\Chill With You_Data\Managed</GameManagedPath>
     <BepInExPath>$(MSBuildProjectDirectory)\..\build-resource\assets\BepInEx_win_x64\BepInEx\core</BepInExPath>
   
     <TargetFramework>net472</TargetFramework>
@@ -117,9 +119,25 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>$(UnityDepsPath)\UnityEngine.UnityWebRequestModule.dll</HintPath>
     </Reference>
-   <Reference Include="UnityEngine.ImageConversionModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
+    <Reference Include="UnityEngine.ImageConversionModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
       <SpecificVersion>True</SpecificVersion>
       <HintPath>$(UnityDepsPath)\UnityEngine.ImageConversionModule.dll</HintPath>
     </Reference>
+    <Reference Include="AudioManager">
+      <HintPath>$(GameManagedPath)\AudioManager.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="TTSBridge\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="ChillTTSRuntime\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>

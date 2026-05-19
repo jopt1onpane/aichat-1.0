@@ -1,0 +1,8 @@
+{
+  "engineVersion": "0.1.0",
+  "pythonExe": "runtime/python.exe",
+  "bridgeScript": "bridge/chill_mod_tts_server.py",
+  "gptWeights": "GPT_weights_v3/satone-e20.ckpt",
+  "sovitsWeights": "SoVITS_weights_v3/satone_e2_s2492_l64.pth",
+  "preload": true
+}

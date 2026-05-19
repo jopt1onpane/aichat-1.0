@@ -2,11 +2,8 @@ using AIChat.Core;
 using BepInEx.Logging;
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -14,6 +11,8 @@ namespace AIChat.Services
 {
     public static class TTSClient
     {
+        /// <param name="sampleSteps">GPT-SoVITS v3 CFM steps (optional).</param>
+        /// <param name="ifSuperResolution">v3 super-resolution post (optional).</param>
         public static IEnumerator DownloadVoiceWithRetry(
             string url,
             string textToSpeak,
@@ -22,12 +21,13 @@ namespace AIChat.Services
             string promptText,
             string promptLang,
             ManualLogSource logger,
-            Action<AudioClip> onComplete, 
-            int maxRetries = 3, 
+            Action<AudioClip> onComplete,
+            int maxRetries = 3,
             float timeoutSeconds = 30f,
-            bool audioPathCheck = false)
+            bool audioPathCheck = false,
+            int? sampleSteps = null,
+            bool? ifSuperResolution = null)
         {
-            // 防御性清理：从 Windows "复制为路径" 粘贴的字符串可能带双引号、尾随反斜杠或空白
             if (!string.IsNullOrEmpty(refPath))
             {
                 refPath = refPath.Trim().Trim('"', '\\', ' ', '\t', '\r', '\n');
@@ -36,25 +36,34 @@ namespace AIChat.Services
 
             if (audioPathCheck && !File.Exists(refPath))
             {
-                string defaultPath = Path.Combine(BepInEx.Paths.PluginPath, "ChillAIMod", "Voice.wav");
-                if (File.Exists(defaultPath)) refPath = defaultPath;
+                string aiChatRef = Path.Combine(BepInEx.Paths.PluginPath, "AIChat", "tts_ref.wav");
+                string legacyChill = Path.Combine(BepInEx.Paths.PluginPath, "ChillAIMod", "Voice.wav");
+                if (File.Exists(aiChatRef))
+                    refPath = aiChatRef;
+                else if (File.Exists(legacyChill))
+                    refPath = legacyChill;
                 else
                 {
-                    logger.LogError($"[TTS] 找不到参考音频: {refPath}");
+                    logger.LogError($"[TTS] 找不到参考音频: {refPath}（也未找到 {aiChatRef}）");
                     onComplete?.Invoke(null);
                     yield break;
                 }
             }
 
-            string jsonBody = $@"{{ 
-                ""text"": ""{ResponseParser.EscapeJson(textToSpeak)}"", 
-                ""text_lang"": ""{targetLang}"", 
-                ""ref_audio_path"": ""{ResponseParser.EscapeJson(refPath)}"", 
-                ""prompt_text"": ""{ResponseParser.EscapeJson(promptText)}"", 
-                ""prompt_lang"": ""{promptLang}"" 
-            }}";
+            var sb = new StringBuilder();
+            sb.Append('{');
+            sb.Append("\"text\":\"").Append(ResponseParser.EscapeJson(textToSpeak)).Append("\",");
+            sb.Append("\"text_lang\":\"").Append(ResponseParser.EscapeJson(targetLang)).Append("\",");
+            sb.Append("\"ref_audio_path\":\"").Append(ResponseParser.EscapeJson(refPath)).Append("\",");
+            sb.Append("\"prompt_text\":\"").Append(ResponseParser.EscapeJson(promptText)).Append("\",");
+            sb.Append("\"prompt_lang\":\"").Append(ResponseParser.EscapeJson(promptLang)).Append('"');
+            if (sampleSteps.HasValue)
+                sb.Append(",\"sample_steps\":").Append(sampleSteps.Value);
+            if (ifSuperResolution.HasValue)
+                sb.Append(",\"if_sr\":").Append(ifSuperResolution.Value ? "true" : "false");
+            sb.Append('}');
+            string jsonBody = sb.ToString();
 
-            // Log the complete TTS API request before starting generation
             logger.LogInfo($"[TTS] 完整请求信息:");
             logger.LogInfo($"[TTS]   URL: {url}");
             logger.LogInfo($"[TTS]   Request Body: {jsonBody}");
@@ -83,14 +92,14 @@ namespace AIChat.Services
                         {
                             logger.LogInfo($"[TTS] 语音生成成功（第 {attempt} 次尝试）（耗时 {requestDuration:F2}s）");
                             onComplete?.Invoke(clip);
-                            yield break; // 成功则退出
+                            yield break;
                         }
                     }
 
                     logger.LogWarning($"[TTS] 第 {attempt}/{maxRetries} 次尝试失败（耗时 {requestDuration:F2}s）: {request.error}");
                     if (attempt < maxRetries)
                     {
-                        yield return new WaitForSeconds(2f); // 重试前等待
+                        yield return new WaitForSeconds(2f);
                     }
                 }
             }
@@ -98,11 +107,29 @@ namespace AIChat.Services
             logger.LogError("[TTS] 所有重试均失败，放弃生成语音");
             onComplete?.Invoke(null);
         }
+
+        /// <summary>先尝试 GET /health（v3 桥接）；失败则退回 POST /tts 小包探测。</summary>
         public static IEnumerator CheckTTSHealthOnce(string baseUrl, ManualLogSource logger, Action<bool> onResult)
         {
-            string ttsUrl = baseUrl.TrimEnd('/') + "/tts";
-            string minimalJson = @"{""text"": ""test""}";
-            using (UnityWebRequest req = new UnityWebRequest(ttsUrl, "POST")) // 没有/ping能够检测服务是否启动，只能利用/tts发一个小包观测失败返回码
+            string trimmed = baseUrl.TrimEnd('/');
+            string healthUrl = trimmed + "/health";
+
+            using (UnityWebRequest h = UnityWebRequest.Get(healthUrl))
+            {
+                h.timeout = 10;
+                yield return h.SendWebRequest();
+
+                if (h.result == UnityWebRequest.Result.Success && h.responseCode == 200)
+                {
+                    logger.LogDebug("[TTS Health] GET /health OK");
+                    onResult?.Invoke(true);
+                    yield break;
+                }
+            }
+
+            string ttsUrl = trimmed + "/tts";
+            string minimalJson = @"{""text"":""ping"",""text_lang"":""ja"",""ref_audio_path"":""x"",""prompt_text"":""x"",""prompt_lang"":""ja""}";
+            using (UnityWebRequest req = new UnityWebRequest(ttsUrl, "POST"))
             {
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(minimalJson);
                 req.uploadHandler = new UploadHandlerRaw(bodyRaw);
@@ -117,19 +144,14 @@ namespace AIChat.Services
                 {
                     isReady = true;
                 }
-                else if (req.responseCode == 422 || req.responseCode == 400) // 在我的电脑上返回400 bad request.
+                else if (req.responseCode == 422 || req.responseCode == 400)
                 {
                     isReady = true;
-                }
-                else
-                {
-                    // 404, 500, ConnectionError, Timeout 等 → 服务未就绪
-                    isReady = false;
                 }
 
                 if (isReady)
                 {
-                    logger.LogDebug("[TTS Health] 检测到服务已启动 (返回 422/200 等)");
+                    logger.LogDebug("[TTS Health] 通过 /tts 探测认为服务已启动");
                 }
                 else
                 {

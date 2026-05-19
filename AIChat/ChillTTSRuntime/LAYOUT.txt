@@ -1,0 +1,34 @@
+Chill TTS Runtime (local dev / end-state layout)
+
+ROOT = folder that contains manifest.json after deploy — same contents as a GPT-SoVITS portable root.
+
+PRODUCT LAYOUT (recommended):
+  ...\BepInEx\plugins\AIChat\ChillTTSBundle\
+    runtime\, GPT_SoVITS\, GPT_weights_v3\, SoVITS_weights_v3\, ...
+    manifest.json, bridge\, ChillTTSLauncher.bat — copy entire tree here so TTS is "next to mod".
+  GptSovits_Portable_Root in cfg defaults to this path (AIChat.dll reads BepInEx paths).
+
+Required (from upstream GSV portable or future bundled tree):
+  runtime/python.exe
+  GPT_SoVITS/   (package code)
+  GPT_weights_v3/*.ckpt
+  SoVITS_weights_v3/*.pth
+  webui.py      (optional; bridge does not require it at runtime)
+  Other deps as already present in your portable copy.
+
+Added by Chill stack:
+  manifest.json              (paths relative to ROOT; edit weights names if you change models)
+  bridge/chill_mod_tts_server.py
+  ChillTTSLauncher.ps1
+  ChillTTSLauncher.bat
+
+Mod cfg (BepInEx):
+  GptSovits_Portable_Root = path to ROOT (default: plugins\AIChat\ChillTTSBundle)
+  TTS_Service_Script_Path = plugins\AIChat\Run_ChillTTSLauncher.vbs
+  CHILL_GSV_HOME is set by Mod to ROOT before spawn.
+
+Deploy once from a dev machine (model already on disk):
+  powershell -ExecutionPolicy Bypass -File ChillTTSRuntime\tools\Deploy-ChillRuntime.ps1 `
+    -TargetRoot "D:\path\to\your\existing\portable\root"
+
+No download / GitHub in this phase; TargetRoot is your current trained-model tree.

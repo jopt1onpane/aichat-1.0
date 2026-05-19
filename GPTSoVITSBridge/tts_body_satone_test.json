@@ -1,0 +1,9 @@
+{
+  "text": "おはよう",
+  "text_lang": "ja",
+  "ref_audio_path": "C:/Users/tempadmin/Downloads/GPT-SoVITS-v3lora-20250228/GPT-SoVITS-v3lora-20250228/raw/satone/wavs/Voice_LaterScenario_3_011.wav_0000000000_0000097280.wav",
+  "prompt_text": "これからも変わらず一緒に作業していこうね",
+  "prompt_lang": "ja",
+  "sample_steps": 32,
+  "if_sr": true
+}

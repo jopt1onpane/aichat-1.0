@@ -1,0 +1,31 @@
+Chill AIMod - GPT-SoVITS v3 TTS (Chill Runtime path)
+
+BUILD OUTPUT (Release):
+  AIChat.dll -> AIChat\bin\Release\net472\AIChat.dll
+  TTSBridge\ -> bin\Release\net472\TTSBridge\ (copy whole folder into plugins\AIChat)
+  ChillTTSRuntime\ -> bin\Release\net472\ChillTTSRuntime\ (spec + deploy script reference only)
+
+LOCAL MODEL TREE — finish line:
+  1) Copy your ENTIRE portable tree (runtime, GPT_SoVITS, weights, etc.) into:
+       <Game>\BepInEx\plugins\AIChat\ChillTTSBundle\
+     (robocopy /MIR or manual; one-time, large copy.)
+  2) Then deploy launcher layer:
+       powershell -ExecutionPolicy Bypass -File AIChat\ChillTTSRuntime\tools\Deploy-ChillRuntime.ps1 `
+         -TargetRoot "<Game>\BepInEx\plugins\AIChat\ChillTTSBundle"
+
+GAME COPY:
+  Copy AIChat.dll + entire TTSBridge\ to BepInEx\plugins\AIChat
+  Add tts_ref.wav under plugins\AIChat if needed.
+
+CFG:
+  GptSovits_Portable_Root defaults to ...\plugins\AIChat\ChillTTSBundle (new installs).
+  Existing cfg: set this to your ChillTTSBundle path or remove the key to regenerate default.
+  TTS_Service_Script_Path = ...\plugins\AIChat\Run_ChillTTSLauncher.vbs  (new default in mod code)
+  Legacy: Run_ChillMod_TTS.vbs + ChillMod_TTS_v3.bat still work if you point cfg there.
+
+WEIGHT PATHS:
+  Edit manifest.json under portable root if filenames differ from manifest.sample.json.
+
+NO automatic GitHub download in this milestone.
+
+7) Phase 3 HTTP self-test: GPTSoVITSBridge\phase3\ — README_phase3.txt

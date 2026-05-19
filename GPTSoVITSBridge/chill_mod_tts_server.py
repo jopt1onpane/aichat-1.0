@@ -23,8 +23,9 @@ Chill AIMod ⇄ GPT-SoVITS v3 推理桥接（FastAPI，路线 B）。
 4. /health GET 在无 --preload 时 models_loaded=false 仍为 200（仅进程就绪）。
 """
 
-from __future__ import annotations
-
+import argparse
+import io
+import os
 import sys
 import traceback
 from typing import Any, Optional
@@ -79,7 +80,7 @@ _iv_state: dict[str, Any] = {"module": None, "error": None}
 
 
 def ensure_inference_webui():
-    """切换工作目录并导入 inference_webui（仅首次）。必须与官方 WebUI 同 cwd。"""
+    """切换工作目录并导入 inference_webui（仅首次）。工作目录须与官方 WebUI 一致。"""
     if _iv_state["module"] is not None:
         return _iv_state["module"]
     if _iv_state["error"] is not None:
