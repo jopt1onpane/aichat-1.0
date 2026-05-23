@@ -1,0 +1,63 @@
+{
+  "_comment": "Chill AI Mod 内置 LLM 资源清单。版本/路径/下载地址/校验全部走这里，AIMod 启动时按此清单装载。",
+
+  "engine": {
+    "name": "llama.cpp",
+    "build_tag": "b9297",
+    "win_x64_variant": "vulkan",
+    "_comment": "解压 llama-b9297-bin-win-vulkan-x64.zip 后将 llama-server.exe 和所有 .dll 放到 engine/ 目录下。Vulkan 版无 CUDA Toolkit 依赖。"
+  },
+
+  "models": [
+    {
+      "id": "chat-default",
+      "role": "chat",
+      "display_name": "Qwen3-8B Instruct (Q4_K_M)",
+      "file": "qwen3-8b-instruct-q4_k_m.gguf",
+      "size_bytes": 4922000000,
+      "sha256": "TODO_FILL_BEFORE_RELEASE",
+      "urls": [
+        "https://huggingface.co/bartowski/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+        "https://hf-mirror.com/bartowski/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"
+      ],
+      "server_args": [
+        "--port", "{port}",
+        "--host", "127.0.0.1",
+        "-m", "{model_path}",
+        "-c", "8192",
+        "-ngl", "999",
+        "--jinja",
+        "--log-disable"
+      ],
+      "default": true
+    },
+    {
+      "id": "embed-default",
+      "role": "embed",
+      "display_name": "BGE-M3 (Q8_0)",
+      "file": "bge-m3-q8_0.gguf",
+      "size_bytes": 612000000,
+      "sha256": "TODO_FILL_BEFORE_RELEASE",
+      "urls": [
+        "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf",
+        "https://hf-mirror.com/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
+      ],
+      "server_args": [
+        "--port", "{port}",
+        "--host", "127.0.0.1",
+        "-m", "{model_path}",
+        "--embedding",
+        "--pooling", "cls",
+        "-c", "8192",
+        "--log-disable"
+      ],
+      "default": true
+    }
+  ],
+
+  "_notes": [
+    "engine/ 目录里必须含 llama-server.exe 与对应 ggml-*.dll、llama.dll 等依赖（直接解压 llama.cpp 官方 release 即可）。",
+    "models/ 由 Mod 内的『下载语音 / 模型资源』按钮自动拉取，不应进 git。",
+    "sha256 字段在正式发布版必须填写真实值；为空时 Mod 会跳过校验并打 warning 日志。"
+  ]
+}

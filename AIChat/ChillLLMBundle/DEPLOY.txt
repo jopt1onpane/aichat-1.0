@@ -1,0 +1,40 @@
+Chill LLM Bundle 部署说明
+=========================================
+
+目录结构（最终用户机器上 BepInEx\plugins\AIChat\ChillLLMBundle\）：
+
+  ChillLLMBundle\
+  ├── manifest.json          ← 已随 Mod 一起分发
+  ├── engine\                ← 引擎（开发者预先放好；用户解压一次）
+  │   ├── llama-server.exe
+  │   ├── llama.dll
+  │   ├── ggml.dll
+  │   ├── ggml-base.dll
+  │   ├── ggml-cpu.dll
+  │   ├── ggml-vulkan.dll
+  │   └── (其余从 release zip 解压出来的 dll)
+  └── models\                ← 用户首启从 HuggingFace 下载
+      ├── qwen3-8b-instruct-q4_k_m.gguf
+      └── bge-m3-q8_0.gguf
+
+
+开发者：准备 engine\ 目录
+-----------------------------
+1) 去 https://github.com/ggml-org/llama.cpp/releases 取最新 release
+   下载 llama-bXXXX-bin-win-vulkan-x64.zip（推荐 Vulkan 版，~32 MB，零额外依赖）
+2) 全部解压到本目录 engine\ 下（可直接放 engine\llama-server.exe，
+   也可保留 zip 解压出的子文件夹如 engine\llama-b9297-bin-win-vulkan-x64\，Mod 会自动搜索）
+3) 把 manifest.json 里 engine.build_tag 更新成你下载的版本号
+
+开发者：填校验
+-----------------------------
+首次发布前对两个 GGUF 算 SHA256 填进 manifest.json 对应字段。
+例如：  certutil -hashfile qwen3-8b-instruct-q4_k_m.gguf SHA256
+
+
+用户：什么都不用动
+-----------------------------
+随 Mod 一起得到 manifest.json + engine\。游戏启动后进入设置 → 常规，
+点底部「下载语音 / 模型资源」按钮，等待自动下载完成即可。
+
+如果下载失败可以手动放置 GGUF 到 models\ 下，文件名按 manifest.json 中 file 字段。

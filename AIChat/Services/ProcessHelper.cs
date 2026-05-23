@@ -17,19 +17,57 @@ namespace AIChat.Services
             if (listenPort <= 0 || listenPort > 65535)
                 listenPort = 9880;
 
-            Log.Info($"[TTS Cleanup] 开始关闭 TTS 服务（端口 {listenPort}）…");
-
-            foreach (int pid in GetListeningPidsOnPort(listenPort))
-                KillProcessTreeByPid(pid, "port-listener");
-
-            KillProcessesWhoseCommandLineContains(
+            StopServiceByPortAndKeywords(
+                "TTS Cleanup",
+                listenPort,
                 "chill_mod_tts_server",
                 "ChillTTSLauncher.bat",
                 "ChillTTSLauncher.ps1",
                 "Run_ChillTTSLauncher",
                 "Run_ChillMod_TTS");
+        }
 
-            Log.Info("[TTS Cleanup] TTS 关闭流程已执行");
+        /// <summary>
+        /// 结束 Mod 启动的本地 LLM（llama-server）服务：监听端口 + 命令行关键字匹配。
+        /// </summary>
+        public static void StopChillModLlmService(int chatPort, int embedPort)
+        {
+            int[] ports = (chatPort == embedPort) ? new[] { chatPort } : new[] { chatPort, embedPort };
+            StopServiceByPortAndKeywords(
+                "LLM Cleanup",
+                ports,
+                "llama-server.exe",
+                "ChillLLMBundle",
+                "chill_mod_llm");
+        }
+
+        /// <summary>
+        /// 通用清理：监听端口上的进程 + 命令行包含关键字的进程。
+        /// </summary>
+        public static void StopServiceByPortAndKeywords(string tag, int listenPort, params string[] keywords)
+        {
+            StopServiceByPortAndKeywords(tag, new[] { listenPort }, keywords);
+        }
+
+        public static void StopServiceByPortAndKeywords(string tag, int[] listenPorts, params string[] keywords)
+        {
+            if (string.IsNullOrEmpty(tag)) tag = "Cleanup";
+            Log.Info($"[{tag}] 开始（端口 {string.Join(",", listenPorts)} / 关键字 {keywords?.Length ?? 0} 个）…");
+
+            if (listenPorts != null)
+            {
+                foreach (int p in listenPorts)
+                {
+                    if (p <= 0 || p > 65535) continue;
+                    foreach (int pid in GetListeningPidsOnPort(p))
+                        KillProcessTreeByPid(pid, $"port-listener:{p}", tag);
+                }
+            }
+
+            if (keywords != null && keywords.Length > 0)
+                KillProcessesWhoseCommandLineContains(tag, keywords);
+
+            Log.Info($"[{tag}] 关闭流程已执行");
         }
 
         public static void KillProcessTree(Process process)
@@ -38,18 +76,18 @@ namespace AIChat.Services
             KillProcessTreeByPid(process.Id, "tracked-process");
         }
 
-        public static void KillProcessTreeByPid(int pid, string reason = null)
+        public static void KillProcessTreeByPid(int pid, string reason = null, string logTag = "Cleanup")
         {
             if (pid <= 0) return;
             try
             {
-                string tag = string.IsNullOrEmpty(reason) ? "" : $" ({reason})";
-                Log.Info($"[TTS Cleanup] taskkill /T /F /PID {pid}{tag}");
+                string suffix = string.IsNullOrEmpty(reason) ? "" : $" ({reason})";
+                Log.Info($"[{logTag}] taskkill /T /F /PID {pid}{suffix}");
                 RunTaskKill($"/T /F /PID {pid}");
             }
             catch (Exception ex)
             {
-                Log.Warning($"[TTS Cleanup] 终止 PID {pid} 失败: {ex.Message}");
+                Log.Warning($"[{logTag}] 终止 PID {pid} 失败: {ex.Message}");
             }
         }
 
@@ -93,11 +131,12 @@ namespace AIChat.Services
             return pids;
         }
 
-        private static void KillProcessesWhoseCommandLineContains(params string[] fragments)
+        private static void KillProcessesWhoseCommandLineContains(string logTag, params string[] fragments)
         {
             if (fragments == null || fragments.Length == 0) return;
             string[] keys = fragments.Where(f => !string.IsNullOrWhiteSpace(f)).ToArray();
             if (keys.Length == 0) return;
+            if (string.IsNullOrEmpty(logTag)) logTag = "Cleanup";
 
             string keyLines = string.Join(Environment.NewLine, keys.Select(k => "    '" + k.Replace("'", "''") + "'"));
             string script =
@@ -108,11 +147,13 @@ namespace AIChat.Services
                 "  foreach ($k in $keys) { if ($c -like (\"*\" + $k + \"*\")) { return $true } }\r\n" +
                 "  return $false\r\n" +
                 "} | ForEach-Object {\r\n" +
-                "  Write-Host (\"[TTS Cleanup] kill \" + $_.ProcessId + \" \" + $_.Name)\r\n" +
+                "  Write-Host (\"[" + logTag + "] kill \" + $_.ProcessId + \" \" + $_.Name)\r\n" +
                 "  & taskkill.exe /T /F /PID $_.ProcessId 2>$null | Out-Null\r\n" +
                 "}\r\n";
 
-            string tempPs = Path.Combine(Path.GetTempPath(), "chill_mod_tts_stop_" + Process.GetCurrentProcess().Id + ".ps1");
+            string safeTag = new string(logTag.Where(char.IsLetterOrDigit).ToArray());
+            if (string.IsNullOrEmpty(safeTag)) safeTag = "cleanup";
+            string tempPs = Path.Combine(Path.GetTempPath(), "chill_mod_" + safeTag + "_stop_" + Process.GetCurrentProcess().Id + ".ps1");
             try
             {
                 File.WriteAllText(tempPs, script);
@@ -136,7 +177,7 @@ namespace AIChat.Services
             }
             catch (Exception ex)
             {
-                Log.Warning($"[TTS Cleanup] 按命令行清理失败: {ex.Message}");
+                Log.Warning($"[{logTag}] 按命令行清理失败: {ex.Message}");
             }
             finally
             {

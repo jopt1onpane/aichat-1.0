@@ -250,9 +250,29 @@ namespace AIChat.Services
             Action<string> onFailure,
             float timeoutSeconds)
         {
-            string url = ollamaBaseUrl.TrimEnd('/') + "/api/embeddings";
-            // keep_alive=30m 让 bge-m3 常驻显存，避免每次 5-10s 冷启动
-            string body = "{\"model\":\"" + JsonEscape(embedModel) + "\",\"prompt\":\"" + JsonEscape(text) + "\",\"keep_alive\":\"30m\"}";
+            // 自动嗅探协议：URL 已含 /v1 走 OpenAI 兼容（llama-server 内嵌后端）；
+            // 否则按老的 Ollama /api/embeddings 走，保留切回 Ollama 的兜底能力。
+            bool useOpenAI = ollamaBaseUrl.IndexOf("/v1", StringComparison.OrdinalIgnoreCase) >= 0
+                             || ollamaBaseUrl.EndsWith(":8081", StringComparison.OrdinalIgnoreCase);
+
+            string url;
+            string body;
+            if (useOpenAI)
+            {
+                string baseTrim = ollamaBaseUrl.TrimEnd('/');
+                // 容许传 "http://127.0.0.1:8081" 或 "http://127.0.0.1:8081/v1"
+                if (!baseTrim.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+                    baseTrim += "/v1";
+                url = baseTrim + "/embeddings";
+                // OpenAI 兼容：input + model（llama-server 单模型时 model 字段会被忽略）
+                body = "{\"model\":\"" + JsonEscape(embedModel) + "\",\"input\":\"" + JsonEscape(text) + "\"}";
+            }
+            else
+            {
+                url = ollamaBaseUrl.TrimEnd('/') + "/api/embeddings";
+                // keep_alive=30m 让 bge-m3 常驻显存，避免每次 5-10s 冷启动
+                body = "{\"model\":\"" + JsonEscape(embedModel) + "\",\"prompt\":\"" + JsonEscape(text) + "\",\"keep_alive\":\"30m\"}";
+            }
             byte[] payload = Encoding.UTF8.GetBytes(body);
 
             using (UnityWebRequest req = new UnityWebRequest(url, "POST"))
@@ -282,13 +302,34 @@ namespace AIChat.Services
         }
 
         /// <summary>
-        /// 解析 Ollama embedding 响应。常见两种格式：
-        /// 1) {"embedding":[...]}   (老版本)
-        /// 2) {"embeddings":[[...]]} (新版本，批量)
+        /// 解析 embedding 响应。兼容三种格式：
+        /// 1) Ollama 老版本：{"embedding":[...]}
+        /// 2) Ollama 新版本（批量）：{"embeddings":[[...]]}
+        /// 3) OpenAI 兼容（llama-server / OpenAI）：{"data":[{"embedding":[...], ...}], ...}
         /// </summary>
         private static float[] ParseEmbeddingResponse(string json)
         {
             if (string.IsNullOrEmpty(json)) return null;
+
+            // OpenAI 兼容：先找 "data":[ {"embedding":[...]} ]，比单独找 "embedding" 更稳
+            int dataIdx = json.IndexOf("\"data\"", StringComparison.Ordinal);
+            if (dataIdx >= 0)
+            {
+                int arrStart = json.IndexOf('[', dataIdx);
+                if (arrStart > 0)
+                {
+                    int embIdx = json.IndexOf("\"embedding\"", arrStart, StringComparison.Ordinal);
+                    if (embIdx > 0)
+                    {
+                        int b = json.IndexOf('[', embIdx);
+                        if (b > 0)
+                        {
+                            int e = json.IndexOf(']', b);
+                            if (e > 0) return ParseFloatList(json, b + 1, e);
+                        }
+                    }
+                }
+            }
 
             int idx = json.IndexOf("\"embedding\"", StringComparison.Ordinal);
             int sliceStart;

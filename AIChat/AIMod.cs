@@ -117,6 +117,19 @@ namespace ChillAIMod
         private Coroutine _ttsHealthCheckCoroutine;
         private const float TTSHealthCheckInterval = 5f; // 每5秒检查一次
 
+        // ================= 【内嵌 LLM 服务】 =================
+        private ConfigEntry<string> _llmBundleRootConfig;
+        private ConfigEntry<int>    _llmChatPortConfig;
+        private ConfigEntry<int>    _llmEmbedPortConfig;
+        private ConfigEntry<bool>   _launchLLMServiceConfig;
+        private ConfigEntry<bool>   _quitLLMServiceOnQuitConfig;
+        private ConfigEntry<bool>   _showLLMChatConsoleConfig;   // 开发期看 llama-server chat 控制台
+        private ConfigEntry<bool>   _showLLMEmbedConsoleConfig;  // 开发期看 llama-server embed 控制台
+        private ConfigEntry<bool>   _showTTSConsoleConfig;       // 开发期保留 TTS 控制台
+        private ConfigEntry<bool>   _showLegacyConfigUIConfig;   // 隐藏旧的 OnGUI 云端配置面板
+        private bool _modAttemptedLaunchLLM;
+        private bool _llmShutdownDone;
+
         private AudioSource _audioSource;
        
         private bool _isAISpeaking = false;
@@ -351,13 +364,18 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             // 按 UI 显示顺序组织，确保配置文件中的顺序与 UI 一致
             
             // --- LLM 配置 ---
-            _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false, "使用 Ollama API");
+            // 默认链路已从云端 (OpenRouter) / 用户本机 Ollama 切换到 Mod 内嵌的 llama-server。
+            // 旧字段全部保留，作为「想切回云端」的隐藏兜底入口（默认值改为本地，不再暴露 UI）。
+            _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false,
+                "使用 Ollama 原生 /api/chat 路径（默认 false：走 OpenAI 兼容路径，对应内嵌 llama-server）。改为 true 可切回旧版 Ollama 链路。");
             _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
-                "https://openrouter.ai/api/v1/chat/completions",
-                "API URL");
-            _apiKeyConfig = Config.Bind("1. LLM", "API_Key", "sk-or-v1-PasteYourKeyHere", "API Key");
-            _modelConfig = Config.Bind("1. LLM", "ModelName", "openai/gpt-3.5-turbo", "模型名称");
+                "http://127.0.0.1:8080/v1/chat/completions",
+                "Chat API URL。默认指向 Mod 内嵌 llama-server (端口 8080)。要切回云端或自建 Ollama 在此修改。");
+            _apiKeyConfig = Config.Bind("1. LLM", "API_Key", "",
+                "API Key。本地 llama-server 不需要，留空即可。仅切回云端时填写。");
+            _modelConfig = Config.Bind("1. LLM", "ModelName", "local",
+                "模型名称。本地 llama-server 单模型时此字段被忽略；切回云端时填具体模型 ID。");
             _logApiRequestBodyConfig = Config.Bind("1. LLM", "LogApiRequestBody", false,
                 "在日志中记录 API 请求体");
             _fixApiPathForThinkModeConfig = Config.Bind("1. LLM", "FixApiPathForThinkMode", true,
@@ -426,19 +444,42 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 "启用记忆");
 
             // --- RAG 配置 ---
-            _ragEnabledConfig = Config.Bind("5. RAG", "EnableRAG", false,
+            // 默认启用：embedding 走内嵌 llama-server (端口 8081)，模型下完即生效。
+            _ragEnabledConfig = Config.Bind("5. RAG", "EnableRAG", true,
                 "启用原作台词检索（RAG），向 system prompt 注入风格参考片段");
             string defaultRagIndex = Path.Combine(BepInEx.Paths.PluginPath, "AIChat", "satone_rag_index.bin");
             _ragIndexPathConfig = Config.Bind("5. RAG", "IndexPath", defaultRagIndex,
                 "RAG 索引文件路径（由 tools/build_rag_index.py 生成）");
             _ragEmbedApiUrlConfig = Config.Bind("5. RAG", "EmbeddingApiUrl",
-                "http://127.0.0.1:11434", "Ollama 基础 URL（用于嵌入接口 /api/embeddings）");
+                "http://127.0.0.1:8081/v1",
+                "Embedding 基础 URL。默认指向 Mod 内嵌 llama-server embed 实例 (端口 8081)。URL 含 /v1 → OpenAI 兼容；只填 http://host:11434 → 回退 Ollama /api/embeddings。");
             _ragEmbedModelConfig = Config.Bind("5. RAG", "EmbeddingModel", "bge-m3",
-                "嵌入模型名称（建议 bge-m3）");
+                "嵌入模型名称（llama-server 单模型时被忽略；Ollama 回退时仍生效）");
             _ragTopKConfig = Config.Bind("5. RAG", "TopK", 3, "检索召回片段数 (1-10)");
             _ragMinScoreConfig = Config.Bind("5. RAG", "MinScore", 0.55f, "最低相似度阈值，低于则不注入");
             _ragTimeoutSecondsConfig = Config.Bind("5. RAG", "TimeoutSeconds", 2.5f,
                 "RAG 嵌入检索超时秒数；超时则跳过本轮 RAG，优先保证低延迟");
+
+            // --- 内嵌 LLM 服务（llama-server）配置 ---
+            string defaultLlmBundle = Path.Combine(aiChatPluginDir, "ChillLLMBundle");
+            _llmBundleRootConfig = Config.Bind("6. LLM Bundle", "BundleRoot", defaultLlmBundle,
+                "内嵌 llama-server 资源根（含 engine/、models/、manifest.json）。默认：本插件目录下 ChillLLMBundle。");
+            _llmChatPortConfig = Config.Bind("6. LLM Bundle", "ChatPort", 8080,
+                "Chat 用 llama-server 监听端口（默认 8080，对应 API_URL=http://127.0.0.1:8080/v1/chat/completions）");
+            _llmEmbedPortConfig = Config.Bind("6. LLM Bundle", "EmbedPort", 8081,
+                "Embedding 用 llama-server 监听端口（默认 8081，对应 EmbeddingApiUrl=http://127.0.0.1:8081/v1）");
+            _launchLLMServiceConfig = Config.Bind("6. LLM Bundle", "LaunchLLMService", true,
+                "启动时自动拉起本地 llama-server（chat + embed）。模型文件缺失时会自动跳过。");
+            _quitLLMServiceOnQuitConfig = Config.Bind("6. LLM Bundle", "QuitLLMServiceOnQuit", true,
+                "退出时自动关闭本地 llama-server 进程");
+            _showLLMChatConsoleConfig = Config.Bind("6. LLM Bundle", "ShowChatConsole", true,
+                "显示 chat llama-server 的控制台窗口（开发期建议 true 便于看推理日志；正式发布前请改 false）");
+            _showLLMEmbedConsoleConfig = Config.Bind("6. LLM Bundle", "ShowEmbedConsole", false,
+                "显示 embed llama-server 的控制台窗口（默认 false，embedding 日志量大且无信息量）");
+            _showTTSConsoleConfig = Config.Bind("6. LLM Bundle", "ShowTTSConsole", true,
+                "显示 TTS 服务的控制台窗口（开发期 true；正式发布前请改 false）");
+            _showLegacyConfigUIConfig = Config.Bind("6. LLM Bundle", "ShowLegacyConfigUI", true,
+                "在 F9 浮窗内显示旧的 LLM/TTS 详细配置（API URL/Key/模型名等）。默认 true 便于开发；正式版应改 false 只露聊天框。");
 
             // ===========================================
 
@@ -487,6 +528,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 try
                 {
                     string ext = Path.GetExtension(cleanPath) ?? "";
+                    bool showTtsConsole = _showTTSConsoleConfig != null && _showTTSConsoleConfig.Value;
                     ProcessStartInfo startInfo;
                     if (ext.Equals(".ps1", StringComparison.OrdinalIgnoreCase))
                     {
@@ -496,7 +538,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                             Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + cleanPath + "\"",
                             WorkingDirectory = Path.GetDirectoryName(cleanPath) ?? "",
                             UseShellExecute = false,
-                            CreateNoWindow = true
+                            CreateNoWindow = !showTtsConsole,
+                            WindowStyle = showTtsConsole ? ProcessWindowStyle.Normal : ProcessWindowStyle.Hidden
                         };
                     }
                     else if (ext.Equals(".bat", StringComparison.OrdinalIgnoreCase)
@@ -506,26 +549,32 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                         string cmdExe = Environment.GetEnvironmentVariable("ComSpec");
                         if (string.IsNullOrEmpty(cmdExe))
                             cmdExe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+                        // 关键：不用 `cmd /c start "" "xxx.bat"`，因为 `start ""` 会无视 CreateNoWindow 弹新窗。
+                        // 改用 `cmd /c ""xxx.bat""`，cmd 自身在 CreateNoWindow 控制下，bat 里启动的 python 子进程也继承（无新控制台）。
                         startInfo = new ProcessStartInfo
                         {
                             FileName = cmdExe,
-                            Arguments = "/c start \"\" \"" + cleanPath + "\"",
+                            Arguments = "/c \"\"" + cleanPath + "\"\"",
                             WorkingDirectory = wd,
                             UseShellExecute = false,
-                            CreateNoWindow = true
+                            CreateNoWindow = !showTtsConsole,
+                            WindowStyle = showTtsConsole ? ProcessWindowStyle.Normal : ProcessWindowStyle.Hidden
                         };
                     }
                     else
                     {
+                        // .vbs / .exe：通过 ShellExecute 走系统默认动作（wscript 已是隐藏运行）。
+                        // 此分支无法在不破坏 .vbs 兼容性的前提下强制隐藏 GUI 应用，故沿用旧逻辑。
                         startInfo = new ProcessStartInfo(cleanPath)
                         {
                             UseShellExecute = true,
-                            WorkingDirectory = Path.GetDirectoryName(cleanPath) ?? ""
+                            WorkingDirectory = Path.GetDirectoryName(cleanPath) ?? "",
+                            WindowStyle = showTtsConsole ? ProcessWindowStyle.Normal : ProcessWindowStyle.Hidden
                         };
                     }
                     _launchedTTSProcess = Process.Start(startInfo);
                     _modAttemptedLaunchTts = true;
-                    Log.Info("已启动 TTS 服务");
+                    Log.Info($"已启动 TTS 服务（控制台={(showTtsConsole ? "显示" : "隐藏")}）");
                 }
                 catch (Exception ex)
                 {
@@ -537,6 +586,13 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             {
                 _ttsHealthCheckCoroutine = StartCoroutine(TTSHealthCheckLoop());
             }
+
+            // 【启动内嵌 LLM 服务】chat + embed 两个 llama-server 进程
+            TryStartEmbeddedLLMServices();
+
+            // 【注入设置页下载按钮】Harmony postfix，玩家每次打开设置常规页时挂上按钮
+            SettingViewDownloadButtonHarmony.OnDownloadButtonClicked = OnUserClickDownloadResources;
+            SettingViewDownloadButtonHarmony.TryApply(Logger);
 
             // 【初始化分层记忆系统】
             if (_experimentalMemoryConfig.Value)
@@ -714,6 +770,9 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 string windowTitle = _showWindowTitle.Value ? "Chill AI 控制台" : "";
                 _windowRect = GUI.Window(12345, _windowRect, DrawWindowContent, windowTitle);
             }
+
+            // 资源下载临时面板（始终独立于聊天窗口；点设置里『下载资源』按钮时弹出）
+            DrawDownloadPanelGui();
         }
 
         void DrawWindowContent(int windowID)
@@ -807,7 +866,19 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
                 // 【关键修复】统一计算内部 Box 宽度
                 // 留出 50px 给滚动条和边框，防止爆边
-                float innerBoxWidth = _windowRect.width - 50f; 
+                float innerBoxWidth = _windowRect.width - 50f;
+
+                // 软隐藏：正式发布前 ShowLegacyConfigUI=false 之后，这整段旧云端配置就不再露给玩家。
+                // 玩家看到的只剩聊天本体，配置全部由 Mod 自带默认值（本地 llama-server）完成。
+                bool showLegacy = _showLegacyConfigUIConfig == null || _showLegacyConfigUIConfig.Value;
+                if (!showLegacy)
+                {
+                    GUILayout.Label("（高级配置已隐藏；如需调整，请编辑 BepInEx\\config 下的 cfg 文件）");
+                    GUILayout.EndVertical();
+                    GUILayout.EndScrollView();
+                    GUI.DragWindow(new Rect(0, 0, _windowRect.width, 20));
+                    return;
+                }
 
                 // --- LLM 配置 Box ---
                 GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
@@ -2042,6 +2113,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
         {
             Application.quitting -= OnGameQuitting;
             StopTtsServiceIfNeeded();
+            StopLLMServiceIfNeeded();
         }
 
         void OnApplicationQuit() => OnGameQuitting();
@@ -2057,6 +2129,265 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             }
 
             StopTtsServiceIfNeeded();
+            StopLLMServiceIfNeeded();
+        }
+
+        // ============================================================
+        // 内嵌 llama-server (chat + embed) 生命周期
+        // ============================================================
+
+        private void TryStartEmbeddedLLMServices()
+        {
+            if (!_launchLLMServiceConfig.Value)
+            {
+                Log.Info("[LLM] LaunchLLMService=false，跳过启动内嵌 llama-server");
+                return;
+            }
+
+            string bundleRoot = _llmBundleRootConfig.Value;
+            if (string.IsNullOrWhiteSpace(bundleRoot) || !Directory.Exists(bundleRoot))
+            {
+                Log.Warning($"[LLM] BundleRoot 不存在，跳过：{bundleRoot}");
+                return;
+            }
+
+            // chat
+            try
+            {
+                var r1 = LLMServerLauncher.StartRole(
+                    bundleRoot, "chat", _llmChatPortConfig.Value,
+                    _showLLMChatConsoleConfig.Value, out string detail1);
+                LogLaunchResult("chat", r1, detail1);
+                if (r1 == LLMServerLauncher.LaunchResult.Started
+                    || r1 == LLMServerLauncher.LaunchResult.AlreadyRunning)
+                    _modAttemptedLaunchLLM = true;
+            }
+            catch (Exception ex) { Log.Warning($"[LLM:chat] 启动异常: {ex.Message}"); }
+
+            // embed
+            try
+            {
+                var r2 = LLMServerLauncher.StartRole(
+                    bundleRoot, "embed", _llmEmbedPortConfig.Value,
+                    _showLLMEmbedConsoleConfig.Value, out string detail2);
+                LogLaunchResult("embed", r2, detail2);
+                if (r2 == LLMServerLauncher.LaunchResult.Started
+                    || r2 == LLMServerLauncher.LaunchResult.AlreadyRunning)
+                    _modAttemptedLaunchLLM = true;
+            }
+            catch (Exception ex) { Log.Warning($"[LLM:embed] 启动异常: {ex.Message}"); }
+        }
+
+        private static void LogLaunchResult(string role, LLMServerLauncher.LaunchResult r, string detail)
+        {
+            switch (r)
+            {
+                case LLMServerLauncher.LaunchResult.Started:
+                    Log.Info($"[LLM:{role}] 已启动：{detail}");
+                    break;
+                case LLMServerLauncher.LaunchResult.AlreadyRunning:
+                    Log.Info($"[LLM:{role}] 已在运行：{detail}");
+                    break;
+                case LLMServerLauncher.LaunchResult.EngineMissing:
+                    Log.Warning($"[LLM:{role}] 引擎缺失：{detail}（请放置 llama-server.exe 到 ChillLLMBundle\\engine\\）");
+                    break;
+                case LLMServerLauncher.LaunchResult.ModelMissing:
+                    Log.Warning($"[LLM:{role}] 模型未下载：{detail}（请用设置界面『下载语音 / 模型资源』按钮）");
+                    break;
+                case LLMServerLauncher.LaunchResult.Failed:
+                    Log.Error($"[LLM:{role}] 启动失败：{detail}");
+                    break;
+            }
+        }
+
+        private void StopLLMServiceIfNeeded()
+        {
+            if (_llmShutdownDone) return;
+            _llmShutdownDone = true;
+
+            if (!_quitLLMServiceOnQuitConfig.Value)
+            {
+                Log.Info("[LLM Cleanup] QuitLLMServiceOnQuit=false，跳过关闭");
+                return;
+            }
+
+            // 只要本局曾尝试启动过，就执行清理（即便句柄已丢失）
+            try
+            {
+                LLMServerLauncher.StopAll();
+                int chatPort  = _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080;
+                int embedPort = _llmEmbedPortConfig != null ? _llmEmbedPortConfig.Value : 8081;
+                ProcessHelper.StopChillModLlmService(chatPort, embedPort);
+                Log.Info("[LLM Cleanup] 已请求关闭本地 llama-server");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[LLM Cleanup] 关闭异常: {ex.Message}");
+            }
+        }
+
+        // ============================================================
+        // 下载资源（设置页按钮回调）
+        // ============================================================
+
+        private bool _downloadInProgress;
+        private bool _downloadPanelVisible;
+        private string _downloadPanelMessage = "";
+        private List<ModelDownloadService.Progress> _downloadProgresses = new List<ModelDownloadService.Progress>();
+        private bool _downloadFinishedFlag;
+        private bool _downloadFinishedOk;
+        private string _downloadFinishedDetail = "";
+
+        private void OnUserClickDownloadResources()
+        {
+            if (_downloadInProgress)
+            {
+                Log.Info("[Download] 已在下载，忽略重复点击");
+                _downloadPanelVisible = true; // 已最小化，恢复显示
+                return;
+            }
+            _downloadPanelVisible = true;
+            _downloadInProgress = true;
+            _downloadFinishedFlag = false;
+            _downloadFinishedOk = false;
+            _downloadFinishedDetail = "";
+            _downloadPanelMessage = "正在准备下载…";
+            _downloadProgresses.Clear();
+
+            StartCoroutine(DownloadResourcesCoroutine());
+        }
+
+        private IEnumerator DownloadResourcesCoroutine()
+        {
+            string bundleRoot = _llmBundleRootConfig != null ? _llmBundleRootConfig.Value
+                                                              : Path.Combine(BepInEx.Paths.PluginPath, "AIChat", "ChillLLMBundle");
+
+            yield return ModelDownloadService.DownloadAllDefaultModelsAsync(
+                bundleRoot,
+                (p) => UpsertProgress(p),
+                (ok, detail) =>
+                {
+                    _downloadFinishedFlag = true;
+                    _downloadFinishedOk = ok;
+                    _downloadFinishedDetail = detail ?? "";
+                });
+
+            // 等待回调完成（其实回调是同步触发的，但保险）
+            while (!_downloadFinishedFlag) yield return null;
+
+            if (_downloadFinishedOk)
+            {
+                _downloadPanelMessage = "下载完成，正在重启本地 LLM 服务…";
+                Log.Info("[Download] 全部模型就绪，重启 llama-server");
+
+                // 关旧的（如果之前因模型缺失启动失败、或之前有旧版在跑）
+                try { LLMServerLauncher.StopAll(); } catch { }
+                try
+                {
+                    int cp = _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080;
+                    int ep = _llmEmbedPortConfig != null ? _llmEmbedPortConfig.Value : 8081;
+                    ProcessHelper.StopChillModLlmService(cp, ep);
+                }
+                catch { }
+
+                yield return new WaitForSeconds(1.0f);
+
+                // 重新拉起
+                _llmShutdownDone = false; // 允许稍后退出时再清理一次
+                TryStartEmbeddedLLMServices();
+
+                // 等 chat 服务健康
+                bool healthy = false;
+                yield return LLMServerLauncher.WaitHealthyAsync(
+                    _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080,
+                    timeoutSeconds: 60f,
+                    ok => healthy = ok);
+
+                if (healthy)
+                {
+                    _downloadPanelMessage = "模型已就绪，可以开始聊天（按 F9/F10 打开输入框）";
+                }
+                else
+                {
+                    _downloadPanelMessage = "下载完成，但 llama-server 健康检查超时，请重启游戏后重试";
+                }
+            }
+            else
+            {
+                _downloadPanelMessage = "下载失败：" + _downloadFinishedDetail;
+            }
+
+            _downloadInProgress = false;
+        }
+
+        private void UpsertProgress(ModelDownloadService.Progress p)
+        {
+            if (p == null) return;
+            // 用 ModelId 做主键去重，仅保留最新的一条进度
+            for (int i = 0; i < _downloadProgresses.Count; i++)
+            {
+                if (_downloadProgresses[i].ModelId == p.ModelId)
+                {
+                    _downloadProgresses[i] = p;
+                    return;
+                }
+            }
+            _downloadProgresses.Add(p);
+        }
+
+        private Rect _downloadPanelRect = new Rect(60, 80, 540, 280);
+        private void DrawDownloadPanelGui()
+        {
+            if (!_downloadPanelVisible) return;
+            _downloadPanelRect = GUI.Window(98765, _downloadPanelRect, DownloadPanelContent, "Chill AI - 资源下载");
+        }
+
+        private void DownloadPanelContent(int id)
+        {
+            GUILayout.Space(6);
+            GUILayout.Label(_downloadPanelMessage);
+            GUILayout.Space(6);
+
+            foreach (var p in _downloadProgresses)
+            {
+                if (p == null) continue;
+
+                string name = string.IsNullOrEmpty(p.ModelDisplayName) ? p.ModelId : p.ModelDisplayName;
+                string sizeLine;
+                if (p.Total > 0)
+                {
+                    float pct = Mathf.Clamp01(p.Total <= 0 ? 0f : (float)p.Downloaded / p.Total);
+                    sizeLine = $"{ModelDownloadService.FormatBytes(p.Downloaded)} / {ModelDownloadService.FormatBytes(p.Total)}  ({pct * 100f:F1}%)";
+                    if (p.SpeedBytesPerSec > 0)
+                        sizeLine += $"   {ModelDownloadService.FormatBytes((long)p.SpeedBytesPerSec)}/s";
+                    GUILayout.Label($"{name}  [{p.Phase}]");
+                    Rect bar = GUILayoutUtility.GetRect(100, 14, GUILayout.ExpandWidth(true));
+                    GUI.Box(bar, "");
+                    Rect filled = new Rect(bar.x, bar.y, bar.width * pct, bar.height);
+                    GUI.Box(filled, "");
+                    GUILayout.Label(sizeLine);
+                }
+                else
+                {
+                    sizeLine = ModelDownloadService.FormatBytes(p.Downloaded);
+                    GUILayout.Label($"{name}  [{p.Phase}]   {sizeLine}");
+                }
+
+                if (!string.IsNullOrEmpty(p.Detail))
+                    GUILayout.Label($"  {p.Detail}");
+
+                GUILayout.Space(4);
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(_downloadInProgress ? "最小化" : "关闭", GUILayout.Height(28)))
+            {
+                _downloadPanelVisible = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUI.DragWindow(new Rect(0, 0, _downloadPanelRect.width, 22));
         }
 
         private int GetTtsListenPort()
