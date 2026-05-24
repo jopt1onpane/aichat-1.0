@@ -125,6 +125,7 @@ namespace ChillAIMod
         private ConfigEntry<bool>   _quitLLMServiceOnQuitConfig;
         private ConfigEntry<bool>   _showLLMChatConsoleConfig;   // 开发期看 llama-server chat 控制台
         private ConfigEntry<bool>   _showLLMEmbedConsoleConfig;  // 开发期看 llama-server embed 控制台
+        private ConfigEntry<float>  _llmHealthTimeoutConfig;
         private ConfigEntry<bool>   _showTTSConsoleConfig;       // 开发期保留 TTS 控制台
         private ConfigEntry<bool>   _showLegacyConfigUIConfig;   // 隐藏旧的 OnGUI 云端配置面板
         private bool _modAttemptedLaunchLLM;
@@ -476,10 +477,21 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 "显示 chat llama-server 的控制台窗口（开发期建议 true 便于看推理日志；正式发布前请改 false）");
             _showLLMEmbedConsoleConfig = Config.Bind("6. LLM Bundle", "ShowEmbedConsole", false,
                 "显示 embed llama-server 的控制台窗口（默认 false，embedding 日志量大且无信息量）");
+            _llmHealthTimeoutConfig = Config.Bind("6. LLM Bundle", "HealthTimeoutSeconds", 300f,
+                "等待 llama-server 模型加载完成的最大秒数（8B 模型首次加载可能需要 2-5 分钟，默认 300）");
             _showTTSConsoleConfig = Config.Bind("6. LLM Bundle", "ShowTTSConsole", true,
                 "显示 TTS 服务的控制台窗口（开发期 true；正式发布前请改 false）");
             _showLegacyConfigUIConfig = Config.Bind("6. LLM Bundle", "ShowLegacyConfigUI", true,
                 "在 F9 浮窗内显示旧的 LLM/TTS 详细配置（API URL/Key/模型名等）。默认 true 便于开发；正式版应改 false 只露聊天框。");
+
+            // HuggingFace Token（可选）：有些模型需要登录才能下载，填写后自动注入 Authorization 头
+            var hfTokenConfig = Config.Bind("6. LLM Bundle", "HuggingFaceToken", "",
+                "HuggingFace 访问 Token（可选）。如下载模型时收到 401 错误，前往 https://huggingface.co/settings/tokens 生成一个 Read 权限 token 粘贴在此。不需要登录时留空即可。");
+            // 运行时写入下载服务的静态字段，供下载协程使用
+            AIChat.Services.ModelDownloadService.HuggingFaceToken = hfTokenConfig.Value;
+
+            // 旧版 cfg 可能仍指向 Ollama(11434)；启用内嵌 LLM 时自动切到本地 llama-server
+            EnsureEmbeddedLlmEndpoints();
 
             // ===========================================
 
@@ -608,11 +620,8 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 if (ok)
                 {
                     Log.Info($">>> RAG 已启用 ({AIChat.Services.RAGClient.Count} 条, dim={AIChat.Services.RAGClient.Dim}, 模型={AIChat.Services.RAGClient.EmbedModel}) <<<");
-                    // 启动协程预热 bge-m3，避免第一次查询的冷启动 timeout
-                    StartCoroutine(AIChat.Services.RAGClient.WarmUpAsync(
-                        _ragEmbedApiUrlConfig.Value,
-                        _ragEmbedModelConfig.Value,
-                        30f));
+                    // embed 服务就绪后再预热（避免 cfg 仍指向 Ollama 或模型尚未下载）
+                    StartCoroutine(RagWarmUpWhenEmbedReadyCoroutine());
                 }
                 else
                 {
@@ -629,11 +638,33 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             PomodoroStateMirror.TryApply(Logger);
 
             // 启动时一次性后台生成「今日聪音的小事」素材，注入对话 prompt。失败 = 素材为空 = persona 规则会让她自然地说"今天没什么特别的"。
-            // 异步设计是为了与未来内嵌 LLM backend 的线程模型兼容（不阻塞主线程）。
+            // 等 chat 服务就绪后再生成，避免仍指向 Ollama 或模型未下载时立刻失败。
             if (_dailyStoryEnabledConfig.Value)
             {
-                StartCoroutine(LaunchDailyStoryGeneration());
+                StartCoroutine(LaunchDailyStoryWhenChatReadyCoroutine());
             }
+        }
+
+        private System.Collections.IEnumerator LaunchDailyStoryWhenChatReadyCoroutine()
+        {
+            if (!_launchLLMServiceConfig.Value)
+            {
+                yield return LaunchDailyStoryGeneration();
+                yield break;
+            }
+
+            int chatPort = _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080;
+            float timeout = _llmHealthTimeoutConfig != null ? _llmHealthTimeoutConfig.Value : 300f;
+            bool ready = false;
+            yield return LLMServerLauncher.WaitHealthyAsync(chatPort, timeout, ok => ready = ok,
+                null, () => LLMServerLauncher.IsAlive("chat"));
+            if (!ready)
+            {
+                Log.Info("[DailyStory] chat 服务未就绪，跳过今日素材生成（模型下载完成后会重试）");
+                yield break;
+            }
+            EnsureEmbeddedLlmEndpoints();
+            yield return LaunchDailyStoryGeneration();
         }
 
         private System.Collections.IEnumerator LaunchDailyStoryGeneration()
@@ -2192,12 +2223,124 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                     Log.Warning($"[LLM:{role}] 引擎缺失：{detail}（请放置 llama-server.exe 到 ChillLLMBundle\\engine\\）");
                     break;
                 case LLMServerLauncher.LaunchResult.ModelMissing:
-                    Log.Warning($"[LLM:{role}] 模型未下载：{detail}（请用设置界面『下载语音 / 模型资源』按钮）");
+                    Log.Warning($"[LLM:{role}] 模型未下载：{detail}（请用设置界面『下载 AI 模型资源』按钮）");
                     break;
                 case LLMServerLauncher.LaunchResult.Failed:
                     Log.Error($"[LLM:{role}] 启动失败：{detail}");
                     break;
             }
+        }
+
+        /// <summary>
+        /// 启用内嵌 LLM 时，把仍指向 Ollama(11434) 的旧 cfg 自动迁移到本地 llama-server。
+        /// 很多用户从 Ollama 版升级后 cfg 不会自动更新，导致「服务已启动但 API 仍连 11434」。
+        /// </summary>
+        private void EnsureEmbeddedLlmEndpoints()
+        {
+            if (_launchLLMServiceConfig == null || !_launchLLMServiceConfig.Value) return;
+
+            int chatPort = _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080;
+            int embedPort = _llmEmbedPortConfig != null ? _llmEmbedPortConfig.Value : 8081;
+            string chatUrl = $"http://127.0.0.1:{chatPort}/v1/chat/completions";
+            string embedUrl = $"http://127.0.0.1:{embedPort}/v1";
+            bool changed = false;
+
+            string apiUrl = _chatApiUrlConfig?.Value ?? "";
+            if (ShouldMigrateToEmbeddedEndpoint(apiUrl, chatPort, isChat: true))
+            {
+                Log.Info($"[LLM] API_URL 迁移: {apiUrl} → {chatUrl}");
+                _chatApiUrlConfig.Value = chatUrl;
+                changed = true;
+            }
+
+            if (_useOllama != null && _useOllama.Value)
+            {
+                Log.Info("[LLM] Use_Ollama_API 已关闭（内嵌 llama-server 走 OpenAI 兼容路径）");
+                _useOllama.Value = false;
+                changed = true;
+            }
+
+            string embedApi = _ragEmbedApiUrlConfig?.Value ?? "";
+            if (ShouldMigrateToEmbeddedEndpoint(embedApi, embedPort, isChat: false))
+            {
+                Log.Info($"[RAG] EmbeddingApiUrl 迁移: {embedApi} → {embedUrl}");
+                _ragEmbedApiUrlConfig.Value = embedUrl;
+                changed = true;
+            }
+
+            if (_showLLMChatConsoleConfig != null && _showLLMChatConsoleConfig.Value)
+            {
+                Log.Info("[LLM] ShowChatConsole 已关闭（内嵌模式默认隐藏控制台窗口）");
+                _showLLMChatConsoleConfig.Value = false;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                try { Config.Save(); }
+                catch (Exception ex) { Log.Warning($"[LLM] 保存迁移后的 cfg 失败: {ex.Message}"); }
+            }
+        }
+
+        private static bool ShouldMigrateToEmbeddedEndpoint(string url, int embeddedPort, bool isChat)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return true;
+            if (url.IndexOf("11434", StringComparison.Ordinal) >= 0) return true;
+            if (url.IndexOf("ollama", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+
+            if (isChat)
+            {
+                // 旧 Ollama 原生路径 /api/chat（非 OpenAI /v1/chat/completions）
+                if (url.IndexOf("/api/chat", StringComparison.OrdinalIgnoreCase) >= 0
+                    && url.IndexOf("/v1/chat", StringComparison.OrdinalIgnoreCase) < 0)
+                    return true;
+                // 已指向别的端口（如旧云端）则不强制改
+                if (url.IndexOf($":{embeddedPort}", StringComparison.Ordinal) >= 0
+                    && url.IndexOf("/v1/chat", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return false;
+                if (url.IndexOf("127.0.0.1", StringComparison.Ordinal) >= 0
+                    || url.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    // localhost 但不是 embed/chat 正确路径 → 迁移
+                    if (url.IndexOf($":{embeddedPort}", StringComparison.Ordinal) < 0) return true;
+                }
+            }
+            else
+            {
+                if (url.IndexOf("/v1", StringComparison.OrdinalIgnoreCase) >= 0
+                    && url.IndexOf($":{embeddedPort}", StringComparison.Ordinal) >= 0)
+                    return false;
+                if (url.IndexOf($":{embeddedPort}", StringComparison.Ordinal) >= 0) return false;
+                if (url.IndexOf("127.0.0.1", StringComparison.Ordinal) >= 0
+                    || url.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private IEnumerator RagWarmUpWhenEmbedReadyCoroutine(float maxWaitSeconds = 300f)
+        {
+            if (!_ragEnabledConfig.Value || !AIChat.Services.RAGClient.IsLoaded) yield break;
+
+            EnsureEmbeddedLlmEndpoints();
+
+            int embedPort = _llmEmbedPortConfig != null ? _llmEmbedPortConfig.Value : 8081;
+            bool ready = false;
+            yield return LLMServerLauncher.WaitHealthyAsync(
+                embedPort, maxWaitSeconds, ok => ready = ok,
+                null, () => LLMServerLauncher.IsAlive("embed"));
+
+            if (!ready)
+            {
+                Log.Warning("[RAG] embed 服务未就绪，跳过 bge-m3 预热（下载模型后会自动重试）");
+                yield break;
+            }
+
+            yield return AIChat.Services.RAGClient.WarmUpAsync(
+                _ragEmbedApiUrlConfig.Value,
+                _ragEmbedModelConfig.Value,
+                30f);
         }
 
         private void StopLLMServiceIfNeeded()
@@ -2246,6 +2389,21 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 _downloadPanelVisible = true; // 已最小化，恢复显示
                 return;
             }
+
+            // 快速路径：模型已就绪且服务在跑 → 不再走整个下载/重启流程，只弹个轻量提示
+            if (IsAllModelsReadyAndServicesAlive(out string readyMsg))
+            {
+                _downloadPanelVisible = true;
+                _downloadInProgress = false;
+                _downloadFinishedFlag = true;
+                _downloadFinishedOk = true;
+                _downloadFinishedDetail = readyMsg;
+                _downloadPanelMessage = readyMsg;
+                _downloadProgresses.Clear();
+                Log.Info($"[Download] {readyMsg}");
+                return;
+            }
+
             _downloadPanelVisible = true;
             _downloadInProgress = true;
             _downloadFinishedFlag = false;
@@ -2255,6 +2413,25 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _downloadProgresses.Clear();
 
             StartCoroutine(DownloadResourcesCoroutine());
+        }
+
+        private bool IsAllModelsReadyAndServicesAlive(out string message)
+        {
+            message = "";
+            string bundleRoot = _llmBundleRootConfig != null ? _llmBundleRootConfig.Value
+                : Path.Combine(BepInEx.Paths.PluginPath, "AIChat", "ChillLLMBundle");
+            string modelsDir = Path.Combine(bundleRoot, "models");
+
+            string qwen = Path.Combine(modelsDir, "qwen3-8b-instruct-q4_k_m.gguf");
+            string bge = Path.Combine(modelsDir, "bge-m3-q8_0.gguf");
+            if (!File.Exists(qwen) || !File.Exists(bge)) return false;
+
+            bool chatAlive = LLMServerLauncher.IsAlive("chat");
+            bool embedAlive = LLMServerLauncher.IsAlive("embed");
+            if (!chatAlive || !embedAlive) return false;
+
+            message = "模型已就绪，无需下载。可直接按 F9/F10 打开聊天框。";
+            return true;
         }
 
         private IEnumerator DownloadResourcesCoroutine()
@@ -2277,7 +2454,7 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
 
             if (_downloadFinishedOk)
             {
-                _downloadPanelMessage = "下载完成，正在重启本地 LLM 服务…";
+                _downloadPanelMessage = "下载完成，正在启动本地 LLM 服务（大模型首次加载约需 2-5 分钟）…";
                 Log.Info("[Download] 全部模型就绪，重启 llama-server");
 
                 // 关旧的（如果之前因模型缺失启动失败、或之前有旧版在跑）
@@ -2295,21 +2472,57 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 // 重新拉起
                 _llmShutdownDone = false; // 允许稍后退出时再清理一次
                 TryStartEmbeddedLLMServices();
+                EnsureEmbeddedLlmEndpoints();
 
-                // 等 chat 服务健康
-                bool healthy = false;
+                float healthTimeout = _llmHealthTimeoutConfig != null ? _llmHealthTimeoutConfig.Value : 300f;
+                int chatPort = _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080;
+                int embedPort = _llmEmbedPortConfig != null ? _llmEmbedPortConfig.Value : 8081;
+
+                bool chatHealthy = false;
+                bool chatAlive = LLMServerLauncher.IsAlive("chat");
                 yield return LLMServerLauncher.WaitHealthyAsync(
-                    _llmChatPortConfig != null ? _llmChatPortConfig.Value : 8080,
-                    timeoutSeconds: 60f,
-                    ok => healthy = ok);
+                    chatPort, healthTimeout, ok => chatHealthy = ok,
+                    (elapsed, port) =>
+                    {
+                        _downloadPanelMessage = $"Chat 模型加载中… {elapsed:F0}s / {healthTimeout:F0}s";
+                    },
+                    () => LLMServerLauncher.IsAlive("chat"));
 
-                if (healthy)
+                bool embedHealthy = false;
+                if (_ragEnabledConfig != null && _ragEnabledConfig.Value)
                 {
-                    _downloadPanelMessage = "模型已就绪，可以开始聊天（按 F9/F10 打开输入框）";
+                    _downloadPanelMessage = "Embed 模型加载中…";
+                    yield return LLMServerLauncher.WaitHealthyAsync(
+                        embedPort, healthTimeout, ok => embedHealthy = ok,
+                        (elapsed, port) =>
+                        {
+                            _downloadPanelMessage = $"Embed 模型加载中… {elapsed:F0}s / {healthTimeout:F0}s";
+                        },
+                        () => LLMServerLauncher.IsAlive("embed"));
                 }
                 else
                 {
-                    _downloadPanelMessage = "下载完成，但 llama-server 健康检查超时，请重启游戏后重试";
+                    embedHealthy = true;
+                }
+
+                if (chatHealthy && embedHealthy)
+                {
+                    yield return RagWarmUpWhenEmbedReadyCoroutine(60f);
+                    _downloadPanelMessage = "模型已就绪，可以开始聊天（按 F9/F10 打开输入框）";
+                    if (_dailyStoryEnabledConfig != null && _dailyStoryEnabledConfig.Value)
+                        StartCoroutine(LaunchDailyStoryGeneration());
+                }
+                else if (!chatAlive && !LLMServerLauncher.IsAlive("chat"))
+                {
+                    _downloadPanelMessage = "Chat 模型加载失败（文件可能损坏）。请再次点击下载按钮。";
+                }
+                else if (_ragEnabledConfig != null && _ragEnabledConfig.Value && !embedHealthy)
+                {
+                    _downloadPanelMessage = "Chat 已就绪，但 RAG 嵌入模型未加载。聊天可用，台词检索暂不可用。";
+                }
+                else
+                {
+                    _downloadPanelMessage = $"模型仍在加载（已等待 {healthTimeout:F0}s）。可最小化后继续等待，或重启游戏。";
                 }
             }
             else
@@ -2348,44 +2561,47 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             GUILayout.Label(_downloadPanelMessage);
             GUILayout.Space(6);
 
-            foreach (var p in _downloadProgresses)
+            // 快速路径：没有任何进度需要展示
+            bool hasProgress = _downloadProgresses != null && _downloadProgresses.Count > 0;
+            if (hasProgress)
             {
-                if (p == null) continue;
-
-                string name = string.IsNullOrEmpty(p.ModelDisplayName) ? p.ModelId : p.ModelDisplayName;
-                string sizeLine;
-                if (p.Total > 0)
+                foreach (var p in _downloadProgresses)
                 {
-                    float pct = Mathf.Clamp01(p.Total <= 0 ? 0f : (float)p.Downloaded / p.Total);
-                    sizeLine = $"{ModelDownloadService.FormatBytes(p.Downloaded)} / {ModelDownloadService.FormatBytes(p.Total)}  ({pct * 100f:F1}%)";
-                    if (p.SpeedBytesPerSec > 0)
-                        sizeLine += $"   {ModelDownloadService.FormatBytes((long)p.SpeedBytesPerSec)}/s";
-                    GUILayout.Label($"{name}  [{p.Phase}]");
-                    Rect bar = GUILayoutUtility.GetRect(100, 14, GUILayout.ExpandWidth(true));
-                    GUI.Box(bar, "");
-                    Rect filled = new Rect(bar.x, bar.y, bar.width * pct, bar.height);
-                    GUI.Box(filled, "");
-                    GUILayout.Label(sizeLine);
-                }
-                else
-                {
-                    sizeLine = ModelDownloadService.FormatBytes(p.Downloaded);
-                    GUILayout.Label($"{name}  [{p.Phase}]   {sizeLine}");
-                }
+                    if (p == null) continue;
 
-                if (!string.IsNullOrEmpty(p.Detail))
-                    GUILayout.Label($"  {p.Detail}");
+                    string name = string.IsNullOrEmpty(p.ModelDisplayName) ? p.ModelId : p.ModelDisplayName;
+                    string sizeLine;
+                    if (p.Total > 0)
+                    {
+                        float pct = Mathf.Clamp01(p.Total <= 0 ? 0f : (float)p.Downloaded / p.Total);
+                        sizeLine = $"{ModelDownloadService.FormatBytes(p.Downloaded)} / {ModelDownloadService.FormatBytes(p.Total)}  ({pct * 100f:F1}%)";
+                        if (p.SpeedBytesPerSec > 0)
+                            sizeLine += $"   {ModelDownloadService.FormatBytes((long)p.SpeedBytesPerSec)}/s";
+                        GUILayout.Label($"{name}  [{p.Phase}]");
+                        Rect bar = GUILayoutUtility.GetRect(100, 14, GUILayout.ExpandWidth(true));
+                        GUI.Box(bar, "");
+                        Rect filled = new Rect(bar.x, bar.y, bar.width * pct, bar.height);
+                        GUI.Box(filled, "");
+                        GUILayout.Label(sizeLine);
+                    }
+                    else
+                    {
+                        sizeLine = ModelDownloadService.FormatBytes(p.Downloaded);
+                        GUILayout.Label($"{name}  [{p.Phase}]   {sizeLine}");
+                    }
 
-                GUILayout.Space(4);
+                    if (!string.IsNullOrEmpty(p.Detail))
+                        GUILayout.Label($"  {p.Detail}");
+
+                    GUILayout.Space(4);
+                }
             }
 
             GUILayout.FlexibleSpace();
-            GUILayout.BeginHorizontal();
             if (GUILayout.Button(_downloadInProgress ? "最小化" : "关闭", GUILayout.Height(28)))
             {
                 _downloadPanelVisible = false;
             }
-            GUILayout.EndHorizontal();
 
             GUI.DragWindow(new Rect(0, 0, _downloadPanelRect.width, 22));
         }

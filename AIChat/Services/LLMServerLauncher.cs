@@ -191,25 +191,54 @@ namespace AIChat.Services
 
         /// <summary>
         /// 协程：等待指定端口的 llama-server /health 返回 200，超时则失败。
+        /// 503 = 模型仍在加载，会继续轮询。
         /// </summary>
-        public static IEnumerator WaitHealthyAsync(int port, float timeoutSeconds, Action<bool> onDone)
+        public static IEnumerator WaitHealthyAsync(
+            int port,
+            float timeoutSeconds,
+            Action<bool> onDone,
+            Action<float, long> onTick = null,
+            Func<bool> isProcessAlive = null)
         {
             string url = $"http://127.0.0.1:{port}/health";
             float start = Time.realtimeSinceStartup;
+            long lastLoggedSec = -1;
+
             while (Time.realtimeSinceStartup - start < timeoutSeconds)
             {
+                float elapsed = Time.realtimeSinceStartup - start;
+                onTick?.Invoke(elapsed, port);
+
+                if (isProcessAlive != null && !isProcessAlive())
+                {
+                    Log.Error($"[LLM] 端口 {port} 的 llama-server 进程已退出，健康检查中止");
+                    onDone?.Invoke(false);
+                    yield break;
+                }
+
                 using (var req = UnityWebRequest.Get(url))
                 {
-                    req.timeout = 3;
+                    req.timeout = 5;
                     yield return req.SendWebRequest();
+
                     if (req.result == UnityWebRequest.Result.Success && req.responseCode == 200)
                     {
+                        Log.Info($"[LLM] 端口 {port} 健康检查通过（耗时 {elapsed:F0}s）");
                         onDone?.Invoke(true);
                         yield break;
                     }
+
+                    long sec = (long)elapsed;
+                    if (sec != lastLoggedSec && (sec % 15 == 0 || sec <= 3))
+                    {
+                        lastLoggedSec = sec;
+                        Log.Info($"[LLM] 端口 {port} 等待就绪… {sec}s / {timeoutSeconds:F0}s（HTTP {(long)req.responseCode}，503=模型加载中）");
+                    }
                 }
-                yield return new WaitForSeconds(0.5f);
+                yield return new WaitForSeconds(1.0f);
             }
+
+            Log.Warning($"[LLM] 端口 {port} 健康检查超时（{timeoutSeconds:F0}s）");
             onDone?.Invoke(false);
         }
 

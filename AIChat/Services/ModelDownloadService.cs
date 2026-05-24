@@ -31,6 +31,9 @@ namespace AIChat.Services
             public bool   Done;
         }
 
+        // 由 AIMod 在配置绑定后写入，供下载时注入 Authorization 头（可选）
+        public static string HuggingFaceToken = "";
+
         /// <summary>
         /// 串行下载 manifest 中所有 role=chat/embed 的默认模型。
         /// </summary>
@@ -104,7 +107,13 @@ namespace AIChat.Services
             if (File.Exists(targetPath))
             {
                 bool needRedownload = false;
-                if (model.SizeBytes > 0)
+                if (!LooksLikeGguf(targetPath))
+                {
+                    Log.Warning($"[Download] 已存在 {model.File} 但文件头不是 GGUF，重新下载");
+                    try { File.Delete(targetPath); } catch { }
+                    needRedownload = true;
+                }
+                else if (model.SizeBytes > 0)
                 {
                     long len = SafeLength(targetPath);
                     if (len != model.SizeBytes && len > 0)
@@ -128,26 +137,99 @@ namespace AIChat.Services
             {
                 if (string.IsNullOrWhiteSpace(url)) continue;
 
-                long resumeFrom = SafeLength(partPath);
-                Log.Info($"[Download] 开始下载 {model.File} ← {url} （断点 {resumeFrom} bytes）");
+                // 决定是否附带 HF token
+                string token = null;
+                bool isHfUrl = url.IndexOf("huggingface.co", StringComparison.OrdinalIgnoreCase) >= 0
+                            || url.IndexOf("hf-mirror.com",  StringComparison.OrdinalIgnoreCase) >= 0;
+                if (isHfUrl && !string.IsNullOrWhiteSpace(HuggingFaceToken))
+                    token = HuggingFaceToken.Trim();
 
                 bool urlOk = false;
                 string urlErr = null;
+                const int maxRetriesPerUrl = 3;
 
-                yield return DownloadFromUrlAsync(url, partPath, resumeFrom, model.SizeBytes,
-                    (p) =>
+                for (int attempt = 1; attempt <= maxRetriesPerUrl && !urlOk; attempt++)
+                {
+                    long resumeFrom = SafeLength(partPath);
+                    // .part 头部若不是 GGUF，说明之前镜像返回了 HTML/鉴权错误页，必须清掉重下
+                    if (resumeFrom > 0 && !LooksLikeGguf(partPath))
                     {
-                        p.ModelId = model.Id;
-                        p.ModelDisplayName = model.DisplayName;
-                        p.CurrentUrl = url;
-                        onProgress?.Invoke(p);
-                    },
-                    (success, detail) => { urlOk = success; urlErr = detail; });
+                        Log.Warning($"[Download] {model.File} 的 .part 文件头无效（可能为鉴权错误页），清除后从头下载");
+                        try { File.Delete(partPath); } catch { }
+                        resumeFrom = 0;
+                    }
+
+                    if (resumeFrom > 0)
+                        Log.Info($"[Download] 断点续传 {model.File} ← {url} （已下载 {FormatBytes(resumeFrom)}，第 {attempt}/{maxRetriesPerUrl} 次）");
+                    else
+                        Log.Info($"[Download] 开始下载 {model.File} ← {url} （第 {attempt}/{maxRetriesPerUrl} 次）");
+
+                    yield return DownloadFromUrlAsync(url, partPath, resumeFrom, model.SizeBytes, token,
+                        (p) =>
+                        {
+                            p.ModelId = model.Id;
+                            p.ModelDisplayName = model.DisplayName;
+                            p.CurrentUrl = url;
+                            p.Detail = resumeFrom > 0 ? "断点续传中" : null;
+                            onProgress?.Invoke(p);
+                        },
+                        (success, detail) => { urlOk = success; urlErr = detail; });
+
+                    if (urlOk) break;
+
+                    // 416：服务端不支持 Range 或偏移无效 → 清掉 .part 从头再来一次
+                    if (IsRangeNotSatisfiable(urlErr) && SafeLength(partPath) > 0)
+                    {
+                        Log.Warning($"[Download] {url} 不支持断点续传，已清除临时文件并从头下载");
+                        try { File.Delete(partPath); } catch { }
+                        yield return DownloadFromUrlAsync(url, partPath, 0, model.SizeBytes, token,
+                            (p) =>
+                            {
+                                p.ModelId = model.Id;
+                                p.ModelDisplayName = model.DisplayName;
+                                p.CurrentUrl = url;
+                                onProgress?.Invoke(p);
+                            },
+                            (success, detail) => { urlOk = success; urlErr = detail; });
+                        if (urlOk) break;
+                    }
+
+                    if (!IsTransientNetworkError(urlErr) || attempt >= maxRetriesPerUrl)
+                        break;
+
+                    float waitSec = attempt * 2f;
+                    Log.Warning($"[Download] {url} 临时失败：{urlErr}，{waitSec:F0}s 后从断点重试");
+                    onProgress?.Invoke(new Progress
+                    {
+                        ModelId = model.Id,
+                        ModelDisplayName = model.DisplayName,
+                        Phase = "downloading",
+                        Downloaded = SafeLength(partPath),
+                        Total = model.SizeBytes,
+                        CurrentUrl = url,
+                        Detail = $"网络中断，{waitSec:F0}s 后自动续传…"
+                    });
+                    yield return new WaitForSeconds(waitSec);
+                }
 
                 if (!urlOk)
                 {
                     Log.Warning($"[Download] {url} 失败：{urlErr}，尝试下一个镜像");
                     lastErr = urlErr;
+                    // 切换镜像前清掉可能损坏的 .part，避免把 HTML 错误页拼进 GGUF
+                    if (SafeLength(partPath) > 0 && !LooksLikeGguf(partPath))
+                    {
+                        try { File.Delete(partPath); } catch { }
+                    }
+                    continue;
+                }
+
+                // 下载完成后校验 GGUF 文件头（比 SHA256 更轻量，能拦截 HF 401 HTML 垃圾）
+                if (!LooksLikeGguf(partPath))
+                {
+                    Log.Warning($"[Download] {url} 下载完成但文件头不是 GGUF（可能是鉴权/错误页），删除后尝试下一个镜像");
+                    try { File.Delete(partPath); } catch { }
+                    lastErr = "下载内容不是有效的 GGUF 模型文件（可能镜像返回了错误页）";
                     continue;
                 }
 
@@ -220,6 +302,7 @@ namespace AIChat.Services
 
         private static IEnumerator DownloadFromUrlAsync(
             string url, string partPath, long resumeFrom, long expectedTotal,
+            string hfToken,
             Action<Progress> onProgress,
             Action<bool, string> onDone)
         {
@@ -230,9 +313,14 @@ namespace AIChat.Services
                     removeFileOnAbort = false
                 };
                 req.disposeDownloadHandlerOnDispose = true;
-                req.timeout = 0; // 大文件下载不能用超时；进度卡死 60s 由上层判断
+                req.timeout = 0;
                 if (resumeFrom > 0)
                     req.SetRequestHeader("Range", "bytes=" + resumeFrom + "-");
+                if (!string.IsNullOrEmpty(hfToken))
+                {
+                    req.SetRequestHeader("Authorization", "Bearer " + hfToken);
+                    Log.Info("[Download] 已附加 HuggingFace Token");
+                }
 
                 var op = req.SendWebRequest();
 
@@ -327,10 +415,52 @@ namespace AIChat.Services
                 onHash?.Invoke(hashHex);
         }
 
+        private static bool LooksLikeGguf(string path)
+        {
+            try
+            {
+                if (!File.Exists(path) || SafeLength(path) < 4) return false;
+                using (var fs = File.OpenRead(path))
+                {
+                    var buf = new byte[4];
+                    return fs.Read(buf, 0, 4) == 4
+                        && buf[0] == (byte)'G' && buf[1] == (byte)'G'
+                        && buf[2] == (byte)'U' && buf[3] == (byte)'F';
+                }
+            }
+            catch { return false; }
+        }
+
         private static long SafeLength(string path)
         {
             try { return File.Exists(path) ? new FileInfo(path).Length : 0; }
             catch { return 0; }
+        }
+
+        /// <summary>检测 models 目录下是否有未完成的 .part 临时文件。</summary>
+        public static long GetIncompleteDownloadBytes(string modelsDir, string fileName)
+        {
+            if (string.IsNullOrEmpty(modelsDir) || string.IsNullOrEmpty(fileName)) return 0;
+            return SafeLength(Path.Combine(modelsDir, fileName + ".part"));
+        }
+
+        private static bool IsRangeNotSatisfiable(string err)
+        {
+            return !string.IsNullOrEmpty(err)
+                && err.IndexOf("(416)", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsTransientNetworkError(string err)
+        {
+            if (string.IsNullOrEmpty(err)) return false;
+            return err.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("connection", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("network", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("abort", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("(0)", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("(502)", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("(503)", StringComparison.OrdinalIgnoreCase) >= 0
+                || err.IndexOf("(504)", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         public static string FormatBytes(long bytes)

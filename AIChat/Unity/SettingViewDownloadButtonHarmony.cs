@@ -143,7 +143,7 @@ namespace AIChat.Unity
             clone.SetActive(true);
 
             WireButtonClick(clone);
-            ReplaceButtonText(clone, "下载语音 / 模型资源");
+            ReplaceButtonText(clone, "下载 AI 模型资源");
 
             // 关键修正：_generalInitButton 是浮在 ScrollView 底部的按钮（不是 LayoutGroup 内项），
             // 直接 Instantiate 会让 clone 和 template 完全重叠。要复制 RectTransform 的 anchor，
@@ -173,6 +173,40 @@ namespace AIChat.Unity
             clone.transform.SetAsLastSibling();
 
             Log.Info($"[下载按钮] 已注入 {viewType.Name} / parent={parent.name} sibling={clone.transform.GetSiblingIndex()} childCount={parent.childCount} activeSelf={clone.activeSelf} activeInHierarchy={clone.activeInHierarchy}");
+        }
+
+        private static void ApplyDownloadButtonAccent(GameObject clone)
+        {
+            // 暖色强调：文字略偏珊瑚色，与设置页灰白按钮区分但不突兀
+            var accentText = new Color(0.82f, 0.52f, 0.46f, 1f);
+            Component tmpText = FindTmpTextRecursive(clone.transform);
+            if (tmpText != null)
+            {
+                try
+                {
+                    PropertyInfo colorProp = tmpText.GetType().GetProperty("color",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    colorProp?.SetValue(tmpText, accentText, null);
+                }
+                catch { /* ignore */ }
+            }
+            else
+            {
+                Text legacy = clone.GetComponentInChildren<Text>(true);
+                if (legacy != null) legacy.color = accentText;
+            }
+
+            // 按钮底图轻微暖色 tint
+            foreach (var img in clone.GetComponentsInChildren<Image>(true))
+            {
+                if (img == null) continue;
+                Color c = img.color;
+                img.color = new Color(
+                    Mathf.Min(1f, c.r * 1.04f),
+                    Mathf.Min(1f, c.g * 0.98f),
+                    Mathf.Min(1f, c.b * 0.94f),
+                    c.a);
+            }
         }
 
         private static void ReplaceButtonText(GameObject clone, string newText)

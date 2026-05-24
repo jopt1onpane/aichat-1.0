@@ -14,18 +14,21 @@
       "role": "chat",
       "display_name": "Qwen3-8B Instruct (Q4_K_M)",
       "file": "qwen3-8b-instruct-q4_k_m.gguf",
-      "size_bytes": 4922000000,
+      "size_bytes": 5027783488,
       "sha256": "TODO_FILL_BEFORE_RELEASE",
+      "_source_note": "Using official Qwen/Qwen3-8B-GGUF repo (Alibaba); bartowski repo requires auth.",
       "urls": [
-        "https://huggingface.co/bartowski/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
-        "https://hf-mirror.com/bartowski/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"
+        "https://modelscope.cn/models/Qwen/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q4_K_M.gguf",
+        "https://hf-mirror.com/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"
       ],
       "server_args": [
         "--port", "{port}",
         "--host", "127.0.0.1",
         "-m", "{model_path}",
-        "-c", "8192",
+        "--device", "Vulkan1",
+        "-c", "16384",
         "-ngl", "999",
+        "-fa", "on",
         "--jinja",
         "--log-disable"
       ],
@@ -36,19 +39,21 @@
       "role": "embed",
       "display_name": "BGE-M3 (Q8_0)",
       "file": "bge-m3-q8_0.gguf",
-      "size_bytes": 612000000,
+      "size_bytes": 634553760,
       "sha256": "TODO_FILL_BEFORE_RELEASE",
       "urls": [
-        "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf",
+        "https://modelscope.cn/models/gpustack/bge-m3-GGUF/resolve/master/bge-m3-Q8_0.gguf",
         "https://hf-mirror.com/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
       ],
       "server_args": [
         "--port", "{port}",
         "--host", "127.0.0.1",
         "-m", "{model_path}",
+        "--device", "Vulkan1",
         "--embedding",
         "--pooling", "cls",
         "-c", "8192",
+        "-ngl", "999",
         "--log-disable"
       ],
       "default": true

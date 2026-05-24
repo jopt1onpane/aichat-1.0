@@ -387,18 +387,18 @@ namespace AIChat.Utils
             if (requestContext.UseLocalOllama)
             {
                 // Ollama 原生 /api/chat 支持 keep_alive；OpenAI 兼容路径通常会忽略未知字段。
-                // 这里保持模型常驻，减少多轮对话时 Qwen 重新加载导致的 10s+ 抖动。
                 extraJson += @",""keep_alive"": ""30m""";
             }
-            // Ollama + Default → 显式禁用思考模式（Qwen3 等模型默认开启思考，会大幅拖慢响应）
-            if (requestContext.UseLocalOllama && requestContext.ThinkMode == ThinkMode.Default)
-            {
-                extraJson += @",""think"": false";
-            }
+
+            // Qwen3 默认开启思考模式会大幅拖慢响应；内嵌 llama-server 与 Ollama 均需显式关闭（Default/Disable）。
+            if (requestContext.ThinkMode == ThinkMode.Enable)
+                extraJson += @",""think"": true";
             else
-            {
-                extraJson += GetThinkParameterJson(requestContext.ThinkMode);
-            }
+                extraJson += @",""think"": false";
+
+            // 陪伴场景短回复即可，避免模型生成长篇导致延迟
+            if (IsEmbeddedLocalLlm(requestContext.ApiUrl))
+                extraJson += @",""max_tokens"": 512";
 
             if (requestContext.ModelName.Contains("gemma")) {
                 // 将 persona 作为背景信息放在 user 消息的最前面
@@ -475,6 +475,13 @@ namespace AIChat.Utils
             }
             
             return baseUrl;
+        }
+
+        private static bool IsEmbeddedLocalLlm(string apiUrl)
+        {
+            if (string.IsNullOrWhiteSpace(apiUrl)) return false;
+            return apiUrl.IndexOf("127.0.0.1", StringComparison.Ordinal) >= 0
+                || apiUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }
