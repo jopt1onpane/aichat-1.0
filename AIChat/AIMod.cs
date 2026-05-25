@@ -43,6 +43,8 @@ namespace ChillAIMod
         private ConfigEntry<string> _gptSovitsPortableRootConfig;
         private ConfigEntry<int> _ttsSampleStepsConfig;
         private ConfigEntry<bool> _ttsIfSrConfig;
+        private ConfigEntry<string> _ttsTextSplitMethodConfig;
+        private ConfigEntry<string> _ttsModelVersionConfig;
 
         // --- 新增窗口大小配置 ---
         private ConfigEntry<float> _windowWidthConfig;
@@ -193,16 +195,16 @@ namespace ChillAIMod
 - 聡音が知らないはずの話題（最新ニュース、技術的な質問への専門的回答など）について詳しく語らない。知らないことは素直に「わかんないや」と言う
 - ユーザーの質問に対して箇条書きやリスト形式で答えない
 - 一度に3文以上の長い返答はしない（聡音は簡潔に話す）
-- **同一セッション内の一貫性**：直前の自分の発言や {{LIVE_CONTEXT}} と矛盾する「今日あった事」「今の体調」などをその場で作らない
+- **同一セッション内の一貫性**：直前の自分の発言や「現在の状況メモ」と矛盾する「今日あった事」「今の体調」などをその場で作らない
 - 依頼された課題や論文を代わりに完成させない。手伝う場合は「一緒に考える」「少し整理する」程度に留める
 - 「安心感」「距離感」「一緒に作業してくれてる」は便利な締め言葉として乱用しない（深い場面でのみ）
 - 反問・話を振る（「君の方は？」等）【重要】：**対話を続けたい・相手の話を深めたいと感じたときだけ** 使う。毎ターンの決め打ちは避ける。ユーザーが長く打った直後は **質問より短い共感・受け止め** を優先する。
 - ユーザーが既に述べた事実に対して **yes/no 確認の疑問形だけで返してはいけない**（×「ポモドーロ4回したの？」のような事実確認）。**ただし、復唱+情緒+追加質問**（○「えっ、授業行かなかったんだ？ どうしたの？体調？」）は OK。前者は「聞いてない」感、後者は「気にかけてる」感。
 - **復唱のしすぎ**：ユーザー長文をそのまま繰り返して終わらせない（エコーBOT禁止）。短い相槌はよい。**各ターン必ず**聡音側から新しい要素を足す——一言のリアクション、感情、自分の状況、軽い話題、具体提案のどれか。**ユーザー発話の長いコピペだけの返答**は禁止。
-- **応答の優先順位（品質）**：① ユーザー直近発話の内容・感情に沿って答える ② {{LIVE_CONTEXT}} の「今の状況」は必要なら短く添える ③ **「今日の出来事メモ」は錦上添花**（さえぎってまで入れない）。
-- **「今日の調子は？気分は？（过得怎么样 / 开不开心 等）」**：**感受・状態が主役**。`{{LIVE_CONTEXT}}` の出来事メモをそのまま読み上げて「今日の答え」にしない（メモは足し話に使うなら一言まで）。※本 mod はこの種の質問は **手書き脚本**が先に応じる場合があり、そのときも同じ趣旨。
+- **応答の優先順位（品質）**：① ユーザー直近発話の内容・感情に沿って答える ②「現在の状況メモ」の「今の状況」は必要なら短く添える ③ **「今日の出来事メモ」は錦上添花**（さえぎってまで入れない）。
+- **「今日の調子は？気分は？（过得怎么样 / 开不开心 等）」**：**感受・状態が主役**。「現在の状況メモ」の出来事メモをそのまま読み上げて「今日の答え」にしない（メモは足し話に使うなら一言まで）。※本 mod はこの種の質問は **手書き脚本**が先に応じる場合があり、そのときも同じ趣旨。
 - **「今日何があった？」「最近どう？」系の質問への鉄則【重要】**：
-  - 答える題材は **{{LIVE_CONTEXT}} の中の『通話開始前の今日（今日の出来事メモ）』だけ**。（※見出しは音声にしない）
+  - 答える題材は **「現在の状況メモ」の中の『通話開始前の今日（今日の出来事メモ）』だけ**。（※見出しは音声にしない）
   - 該当メモがあれば、**そのうち 1 件だけ** を自然な思い出として語る（列挙しない、まとめて披露しない）。
   - メモが無い／話題と関連が薄い場合は、**事実を作らない**：「うーん…今日は大きな出来事はなかったかな。普通に作業してた感じ」と素直に答える。**ここから無理に聞き返さなくてよい**（会話の流れで自然なら一言でよい）。
   - **絶対禁止**：見出し（「通話開始前の今日」「今日の出来事メモ」など）や中点「· 」をそのまま読み上げる、項目名を復唱する、ラベルとして列挙する。素材は思い出として自然な日本語の文に溶かして使う。
@@ -264,7 +266,6 @@ namespace ChillAIMod
 === 現在の状況（基本設定） ===
 プレイヤーとビデオ通話中の「協作通話」セッション。お互い自分の作業をしながら画面越しに一緒に過ごしている。聡音はSF小説の執筆や大学の勉強をしている。プレイヤーは自分の勉強や仕事をしている。たまに雑談が始まるが、基本はゆるい共有時間。
 
-{{LIVE_CONTEXT}}
 === 回答フォーマット（厳守） ===
 [Action:タグ名] ||| 日本語の台詞 ||| 中国語翻訳
 
@@ -419,8 +420,10 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
             _promptLangConfig = Config.Bind("2. TTS", "PromptLang", "ja", "音频文件语言 (prompt_lang)");
             _targetLangConfig = Config.Bind("2. TTS", "TargetLang", "ja", "合成语音语言 (text_lang)");
             _japaneseCheckConfig = Config.Bind("2. TTS", "JapaneseCheck", true, "检测合成语音文本是否为日文（当合成语音语言为 ja 时可防止发出怪声）");
-            _ttsSampleStepsConfig = Config.Bind("2. TTS", "TTS_SampleSteps", 32, "v3 推理 sample_steps（建议 16–32）");
-            _ttsIfSrConfig = Config.Bind("2. TTS", "TTS_SuperResolution", true, "v3 是否启用超分 if_sr（更亮一些，略慢）");
+            _ttsSampleStepsConfig = Config.Bind("2. TTS", "TTS_SampleSteps", 24, "v3 推理 sample_steps（建议 16–32）");
+            _ttsIfSrConfig = Config.Bind("2. TTS", "TTS_SuperResolution", false, "v3 是否启用超分 if_sr（更亮一些，略慢）");
+            _ttsTextSplitMethodConfig = Config.Bind("2. TTS", "TTS_TextSplitMethod", "cut1", "分句方式：cut1=凑四句一切（推荐日文）；cut5=按标点；none=不切");
+            _ttsModelVersionConfig = Config.Bind("2. TTS", "TTS_ModelVersion", "v3", "推理模型版本标记：v3 发送 sample_steps/if_sr；v2ProPlus 阶段二再改");
             _voiceVolumeConfig = Config.Bind("2. TTS", "VoiceVolume", 1.0f, "语音音量 (0.0 - 1.0)");
 
             // --- 界面配置 ---
@@ -983,6 +986,12 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                     GUILayout.EndHorizontal();
 
                     _ttsIfSrConfig.Value = GUILayout.Toggle(_ttsIfSrConfig.Value, "v3 超分 if_sr", GUILayout.Height(elementHeight));
+
+                    GUILayout.Label("分句 text_split_method（cut1 推荐）：");
+                    _ttsTextSplitMethodConfig.Value = GUILayout.TextField(_ttsTextSplitMethodConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                    GUILayout.Label("TTS_ModelVersion（v3 / v2ProPlus）：");
+                    _ttsModelVersionConfig.Value = GUILayout.TextField(_ttsModelVersionConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
 
                     GUILayout.Space(5);
                     _LaunchTTSServiceConfig.Value = GUILayout.Toggle(_LaunchTTSServiceConfig.Value, "启动时自动运行 TTS 服务", GUILayout.Height(elementHeight));
@@ -1615,6 +1624,18 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 GameBridge.RestoreLookAt();
             }
 
+            if (success && string.IsNullOrWhiteSpace(fullResponse))
+            {
+                Log.Warning("[AIChat] LLM HTTP 成功但未能从 JSON 提取 content（ExtractContentRegex 返回空）。请查看 LogApiRequestBody 或修复 ResponseParser。");
+                myText.text = "モデルの返答を読み取れませんでした。\n（解析失败，请查看 LogOutput.log）";
+                myText.color = Color.red;
+                yield return new WaitForSecondsRealtime(3.0f);
+                UIHelper.DestroyOverlayCanvas(overlayCanvasObj);
+                ModNativeInteractionSession.SuppressNativeClickReactions = false;
+                _isProcessing = false;
+                yield break;
+            }
+
             if (!success)
             {
                 if (errCode == 401) errMsg += "\n(请检查 API Key 是否正确)";
@@ -1908,7 +1929,9 @@ Joy=嬉しい笑顔, Sad=心配, Fun=笑い, Guts=がんばる, Agree=頷く, Fr
                 90f,
                 _audioPathCheckConfig.Value,
                 _ttsSampleStepsConfig.Value,
-                _ttsIfSrConfig.Value));
+                _ttsIfSrConfig.Value,
+                _ttsTextSplitMethodConfig.Value,
+                _ttsModelVersionConfig.Value));
             onComplete?.Invoke(downloadedClip);
         }
 

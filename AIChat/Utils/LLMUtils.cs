@@ -346,20 +346,48 @@ namespace AIChat.Utils
             // 【集成分层记忆】获取带记忆上下文的提示词
             string userPromptWithMemory = GetContextWithMemory(requestContext.HierarchicalMemory, requestContext.UserPrompt);
 
-            // 【实时上下文注入】用游戏当前的真实状态（番茄钟 / 活动 / 时间）替换 prompt 中的 {{LIVE_CONTEXT}} 占位符
-            string finalSystemPrompt = requestContext.SystemPrompt;
+            // 【实时上下文 + RAG】
+            // 设计：system 保持「**完全静态**」以最大化 llama-server KV 前缀缓存命中率
+            //       （Qwen3 8K+ 长 persona 的 prefill 每轮要 ~9s，命中缓存后可压到 ~1s）。
+            // LIVE_CONTEXT 与 RAG 每轮都会变化（时间/Pomodoro/检索结果），故塞到 user 消息的前缀。
+            // 兼容老逻辑：若 system 仍含 {{LIVE_CONTEXT}} 占位符（用户自定义 persona），按旧逻辑替换并把 RAG 追加到 system 尾部。
+            string finalSystemPrompt = requestContext.SystemPrompt ?? string.Empty;
             string liveContext = string.Empty;
             try { liveContext = LiveContextProvider.BuildContextSnippet(); }
             catch (Exception ex) { Log.Warning($"[LiveContext] 构建失败: {ex.Message}"); }
 
-            if (finalSystemPrompt.Contains("{{LIVE_CONTEXT}}"))
+            bool legacyPlaceholderMode = finalSystemPrompt.Contains("{{LIVE_CONTEXT}}");
+            string userPromptForLlm;
+
+            if (legacyPlaceholderMode)
             {
+                // 旧路径：替换占位符（含 5 处全替换的副作用，缓存命中率会低）+ RAG 追加 system 尾部
                 finalSystemPrompt = finalSystemPrompt.Replace("{{LIVE_CONTEXT}}", liveContext ?? string.Empty);
+                if (!string.IsNullOrEmpty(requestContext.ReferenceSnippets))
+                {
+                    finalSystemPrompt = finalSystemPrompt + "\n" + requestContext.ReferenceSnippets;
+                }
+                userPromptForLlm = userPromptWithMemory;
+                Log.Info("[LLM] 兼容模式：system 含 {{LIVE_CONTEXT}} 占位符，沿用旧拼接路径（KV 缓存难复用）。");
             }
-            else if (!string.IsNullOrEmpty(liveContext))
+            else
             {
-                // 兼容自定义 prompt 没有占位符的情况：直接附加到末尾
-                finalSystemPrompt = finalSystemPrompt + "\n" + liveContext;
+                // 新路径：system 保持静态，user 前缀注入 LIVE_CONTEXT + RAG
+                var userSb = new StringBuilder();
+                if (!string.IsNullOrEmpty(liveContext))
+                {
+                    userSb.Append(liveContext.TrimEnd());
+                    userSb.Append("\n\n");
+                }
+                if (!string.IsNullOrEmpty(requestContext.ReferenceSnippets))
+                {
+                    userSb.Append("=== 参考メモ（RAG） ===\n");
+                    userSb.Append(requestContext.ReferenceSnippets.TrimEnd());
+                    userSb.Append("\n\n");
+                }
+                userSb.Append("=== 現在の入力 ===\n");
+                userSb.Append(userPromptWithMemory ?? string.Empty);
+                userPromptForLlm = userSb.ToString();
             }
 
             // 不依赖 LogApiRequestBody，明确记录 LiveContext 是否注入了什么内容
@@ -374,13 +402,8 @@ namespace AIChat.Utils
 
             int sysChars = (finalSystemPrompt ?? string.Empty).Length;
             int ragChars = (requestContext.ReferenceSnippets ?? string.Empty).Length;
-            Log.Info($"[LLM] 拼接后 system 约 {sysChars} 字（其中 RAG 块约 {ragChars} 字）；越长推理略慢，可对照此数做精简。");
-
-            // 【集成 RAG】将检索到的参考语境追加到 system prompt 末尾
-            if (!string.IsNullOrEmpty(requestContext.ReferenceSnippets))
-            {
-                finalSystemPrompt = finalSystemPrompt + "\n" + requestContext.ReferenceSnippets;
-            }
+            int userChars = (userPromptForLlm ?? string.Empty).Length;
+            Log.Info($"[LLM] system 约 {sysChars} 字（静态={!legacyPlaceholderMode}），user 约 {userChars} 字（含 RAG 约 {ragChars} 字）。静态 system 越长，首轮越慢但后续轮缓存命中收益越大。");
 
             string jsonBody;
             string extraJson = requestContext.UseLocalOllama ? $@",""stream"": false" : "";
@@ -390,31 +413,35 @@ namespace AIChat.Utils
                 extraJson += @",""keep_alive"": ""30m""";
             }
 
-            // Qwen3 默认开启思考模式会大幅拖慢响应；内嵌 llama-server 与 Ollama 均需显式关闭（Default/Disable）。
-            if (requestContext.ThinkMode == ThinkMode.Enable)
-                extraJson += @",""think"": true";
-            else
-                extraJson += @",""think"": false";
+            // Ollama 原生 /api/chat 才支持 think 字段；llama-server OpenAI 兼容端点会忽略它。
+            // 内嵌 Qwen3 thinking 由启动参数 --reasoning-budget 0 关闭，避免 reasoning_content 吃光输出 token。
+            if (requestContext.UseLocalOllama)
+            {
+                if (requestContext.ThinkMode == ThinkMode.Enable)
+                    extraJson += @",""think"": true";
+                else
+                    extraJson += @",""think"": false";
+            }
 
-            // 陪伴场景短回复即可，避免模型生成长篇导致延迟
-            if (IsEmbeddedLocalLlm(requestContext.ApiUrl))
-                extraJson += @",""max_tokens"": 512";
+            // Step1: 只限制内嵌 llama-server 的正文输出长度。prompt/context 不截断，-c 仍为 16384。
+            if (IsEmbeddedLlamaServer(requestContext.ApiUrl))
+            {
+                extraJson += @",""max_tokens"": 256";
+                Log.Info("[LLM] 内嵌 llama-server: --reasoning-budget 0 关闭 thinking，max_tokens=256");
+            }
 
             if (requestContext.ModelName.Contains("gemma")) {
-                // 将 persona 作为背景信息放在 user 消息的最前面
-                string finalPrompt = $"[System Instruction]\n{finalSystemPrompt}\n\n[User Message]\n{userPromptWithMemory}";
+                // gemma 系不支持 system role，必须拼接到 user 消息开头
+                string finalPrompt = $"[System Instruction]\n{finalSystemPrompt}\n\n[User Message]\n{userPromptForLlm}";
                 jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(finalPrompt)}"" }} ]{extraJson} }}";
             } else {
-                // Gemini 或 Ollama (如果是 Llama3 等) 通常支持 system role
-                jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(finalSystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ]{extraJson} }}";
+                jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(finalSystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptForLlm)}"" }} ]{extraJson} }}";
             }
 
             Log.Info($"[记忆系统] 启用状态: {requestContext.HierarchicalMemory != null}; RAG 段落字节数: {(requestContext.ReferenceSnippets ?? string.Empty).Length}");
-            // 【日志】打印完整的请求体（如果启用）
             if (requestContext.LogApiRequestBody)
             {
-                // 【调试日志】显示完整的请求内容
-                Log.Info($"[发送给LLM的完整内容]\n========================================\n[System Prompt]\n{finalSystemPrompt}\n\n[User Content]\n{userPromptWithMemory}\n========================================");
+                Log.Info($"[发送给LLM的完整内容]\n========================================\n[System Prompt]\n{finalSystemPrompt}\n\n[User Content]\n{userPromptForLlm}\n========================================");
                 Log.Info($"[API请求] 完整请求体:\n{jsonBody}");
             }
 
@@ -477,11 +504,12 @@ namespace AIChat.Utils
             return baseUrl;
         }
 
-        private static bool IsEmbeddedLocalLlm(string apiUrl)
+        private static bool IsEmbeddedLlamaServer(string apiUrl)
         {
             if (string.IsNullOrWhiteSpace(apiUrl)) return false;
-            return apiUrl.IndexOf("127.0.0.1", StringComparison.Ordinal) >= 0
-                || apiUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0;
+            return (apiUrl.IndexOf("127.0.0.1:8080", StringComparison.Ordinal) >= 0
+                || apiUrl.IndexOf("localhost:8080", StringComparison.OrdinalIgnoreCase) >= 0)
+                && apiUrl.IndexOf("/v1/chat/completions", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

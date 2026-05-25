@@ -23,8 +23,11 @@ namespace AIChat.Services
         {
             var sb = new StringBuilder();
 
+            // ★KV 缓存最大化考量：本段会塞到 user 消息前缀。
+            //   - 时钟去掉分钟精度（只保留時間帯），避免每分钟产生新 token 让缓存全失效
+            //   - Pomodoro 剩余分钟改成 5/10/20/30+ 4 个分桶
+            //   这样几分钟内的连续对话能让 llama-server slot 复用上一轮 KV cache。
             string timeOfDay = GetTimeOfDayJa(DateTime.Now.Hour);
-            string clock = DateTime.Now.ToString("HH:mm");
             string activity = GameBridge.GetCurrentActivityJa();
             var pomo = GameBridge.GetPomodoroSnapshot();
             string dailyStory = DailyStoryGenerator.BuildSnippetForPrompt();
@@ -42,7 +45,7 @@ namespace AIChat.Services
 
             if (!string.IsNullOrEmpty(timeOfDay))
             {
-                sb.AppendLine($"- 現在の時間帯：{timeOfDay}（{clock}頃）");
+                sb.AppendLine($"- 現在の時間帯：{timeOfDay}");
             }
             if (!string.IsNullOrEmpty(activity))
             {
@@ -50,14 +53,15 @@ namespace AIChat.Services
             }
             if (pomo.valid)
             {
+                string bucket = BucketRemainMinutesJa(pomo.remainMinutes);
                 if (pomo.phase == "Work")
                 {
-                    sb.AppendLine($"- ポモドーロ：作業中（第{pomo.loop}サイクル、あと約{pomo.remainMinutes}分）");
+                    sb.AppendLine($"- ポモドーロ：作業中（第{pomo.loop}サイクル、{bucket}）");
                     sb.AppendLine("  ⚠ 作業中なので、君は集中したい。返答は1文以内・短く・優しく作業に戻るよう促す。雑談は休憩までお預け。");
                 }
                 else if (pomo.phase == "Break")
                 {
-                    sb.AppendLine($"- ポモドーロ：休憩中（第{pomo.loop}サイクル、あと約{pomo.remainMinutes}分）");
+                    sb.AppendLine($"- ポモドーロ：休憩中（第{pomo.loop}サイクル、{bucket}）");
                     sb.AppendLine("  → 休憩中なので、雑談したり、お茶を勧めたり、ストレッチを提案したりする時間。");
                 }
             }
@@ -98,6 +102,18 @@ namespace AIChat.Services
             if (hour >= 11 && hour < 17) return "昼";
             if (hour >= 17 && hour < 20) return "夕方";
             return "夜";
+        }
+
+        /// <summary>
+        /// Pomodoro 剩余分钟分桶，避免每分钟变化打掉 KV 缓存。
+        /// 桶选得"会话感觉合理"：5 分内→快结束；10 分→半段；20 分→中段；30+→刚开始。
+        /// </summary>
+        private static string BucketRemainMinutesJa(int remainMinutes)
+        {
+            if (remainMinutes <= 5) return "あと 5 分以内";
+            if (remainMinutes <= 15) return "あと 10 分くらい";
+            if (remainMinutes <= 25) return "あと 20 分くらい";
+            return "あと 30 分以上";
         }
     }
 }

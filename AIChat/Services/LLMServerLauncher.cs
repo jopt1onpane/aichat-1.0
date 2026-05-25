@@ -151,7 +151,7 @@ namespace AIChat.Services
                     DrainAsync(proc.StandardError, $"[LLM:{role}:err]");
                 }
 
-                detail = $"PID={proc.Id} 端口={port} 模型={model.Id} 控制台={(showConsole ? "显示" : "隐藏")}";
+                detail = $"PID={proc.Id} 端口={port} 模型={model.Id} 引擎={enginePath} 参数={args} 控制台={(showConsole ? "显示" : "隐藏")}";
                 return LaunchResult.Started;
             }
             catch (Exception ex)
@@ -247,7 +247,8 @@ namespace AIChat.Services
         // ============================================================
 
         /// <summary>
-        /// 解析 llama-server.exe：优先 engine\llama-server.exe，否则在 engine\ 下递归搜索（兼容解压到子文件夹）。
+        /// 解析 llama-server.exe：优先 CUDA 版，其次 engine\llama-server.exe，最后递归搜索。
+        /// 这样 engine/ 下同时存在 Vulkan 与 CUDA 解压目录时会自动使用 NVIDIA CUDA backend。
         /// </summary>
         public static bool TryResolveLlamaServerExe(string bundleRoot, out string exePath, out string workingDir)
         {
@@ -258,17 +259,34 @@ namespace AIChat.Services
             string engineRoot = Path.Combine(bundleRoot, "engine");
             if (!Directory.Exists(engineRoot)) return false;
 
-            string direct = Path.Combine(engineRoot, "llama-server.exe");
-            if (File.Exists(direct))
-            {
-                exePath = direct;
-                workingDir = engineRoot;
-                return true;
-            }
-
             try
             {
-                foreach (string found in Directory.GetFiles(engineRoot, "llama-server.exe", SearchOption.AllDirectories))
+                var all = new List<string>(Directory.GetFiles(engineRoot, "llama-server.exe", SearchOption.AllDirectories));
+                string cuda = null;
+                foreach (string found in all)
+                {
+                    if (found.IndexOf("cuda", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        cuda = found;
+                        break;
+                    }
+                }
+                if (!string.IsNullOrEmpty(cuda))
+                {
+                    exePath = cuda;
+                    workingDir = Path.GetDirectoryName(cuda) ?? engineRoot;
+                    return true;
+                }
+
+                string direct = Path.Combine(engineRoot, "llama-server.exe");
+                if (File.Exists(direct))
+                {
+                    exePath = direct;
+                    workingDir = engineRoot;
+                    return true;
+                }
+
+                foreach (string found in all)
                 {
                     exePath = found;
                     workingDir = Path.GetDirectoryName(found) ?? engineRoot;
@@ -293,7 +311,12 @@ namespace AIChat.Services
                         // 不全量打日志，只打错误/警告行，避免淹没
                         if (line.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0
                             || line.IndexOf("warn", StringComparison.OrdinalIgnoreCase) >= 0
-                            || line.IndexOf("exception", StringComparison.OrdinalIgnoreCase) >= 0)
+                            || line.IndexOf("exception", StringComparison.OrdinalIgnoreCase) >= 0
+                            || line.IndexOf("cuda", StringComparison.OrdinalIgnoreCase) >= 0
+                            || line.IndexOf("vulkan", StringComparison.OrdinalIgnoreCase) >= 0
+                            || line.IndexOf("backend", StringComparison.OrdinalIgnoreCase) >= 0
+                            || line.IndexOf("offload", StringComparison.OrdinalIgnoreCase) >= 0
+                            || line.IndexOf("device", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
                             Log.Warning($"{prefix} {line}");
                         }

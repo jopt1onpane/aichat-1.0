@@ -11,8 +11,10 @@ namespace AIChat.Services
 {
     public static class TTSClient
     {
-        /// <param name="sampleSteps">GPT-SoVITS v3 CFM steps (optional).</param>
-        /// <param name="ifSuperResolution">v3 super-resolution post (optional).</param>
+        /// <param name="sampleSteps">GPT-SoVITS v3 CFM steps (optional, v3 only).</param>
+        /// <param name="ifSuperResolution">v3 super-resolution post (optional, v3 only).</param>
+        /// <param name="textSplitMethod">e.g. cut1 / cut5 (see bridge manifest).</param>
+        /// <param name="ttsModelVersion">v3 | v2ProPlus — controls which inference params are sent.</param>
         public static IEnumerator DownloadVoiceWithRetry(
             string url,
             string textToSpeak,
@@ -26,7 +28,9 @@ namespace AIChat.Services
             float timeoutSeconds = 30f,
             bool audioPathCheck = false,
             int? sampleSteps = null,
-            bool? ifSuperResolution = null)
+            bool? ifSuperResolution = null,
+            string textSplitMethod = "cut1",
+            string ttsModelVersion = "v3")
         {
             if (!string.IsNullOrEmpty(refPath))
             {
@@ -57,10 +61,17 @@ namespace AIChat.Services
             sb.Append("\"ref_audio_path\":\"").Append(ResponseParser.EscapeJson(refPath)).Append("\",");
             sb.Append("\"prompt_text\":\"").Append(ResponseParser.EscapeJson(promptText)).Append("\",");
             sb.Append("\"prompt_lang\":\"").Append(ResponseParser.EscapeJson(promptLang)).Append('"');
-            if (sampleSteps.HasValue)
-                sb.Append(",\"sample_steps\":").Append(sampleSteps.Value);
-            if (ifSuperResolution.HasValue)
-                sb.Append(",\"if_sr\":").Append(ifSuperResolution.Value ? "true" : "false");
+            if (!string.IsNullOrWhiteSpace(textSplitMethod))
+                sb.Append(",\"text_split_method\":\"").Append(ResponseParser.EscapeJson(textSplitMethod.Trim())).Append('"');
+            string ver = (ttsModelVersion ?? "v3").Trim().ToLowerInvariant();
+            bool isV3 = ver == "v3" || ver == "v4";
+            if (isV3)
+            {
+                if (sampleSteps.HasValue)
+                    sb.Append(",\"sample_steps\":").Append(sampleSteps.Value);
+                if (ifSuperResolution.HasValue)
+                    sb.Append(",\"if_sr\":").Append(ifSuperResolution.Value ? "true" : "false");
+            }
             sb.Append('}');
             string jsonBody = sb.ToString();
 

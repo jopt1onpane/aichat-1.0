@@ -33,10 +33,41 @@ namespace AIChat.Core
             }
         }
 
+        /// <summary>
+        /// 从 OpenAI 兼容 /v1/chat/completions 响应中提取 assistant 正文。
+        /// 旧版 (.*?) 在含转义符、换行或 Qwen3 长回复时会截断或匹配到空 content，导致 UI 无字幕。
+        /// </summary>
         public static string ExtractContentRegex(string json)
         {
-            try { var match = Regex.Match(json, "\"content\"\\s*:\\s*\"(.*?)\""); return match.Success ? Regex.Unescape(match.Groups[1].Value) : null; }
-            catch { return null; }
+            if (string.IsNullOrEmpty(json)) return null;
+            try
+            {
+                // 优先：choices[0].message.content（标准结构）
+                var choice = Regex.Match(json,
+                    "\"choices\"\\s*:\\s*\\[\\s*\\{[\\s\\S]*?\"message\"\\s*:\\s*\\{[\\s\\S]*?\"content\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"",
+                    RegexOptions.Singleline);
+                if (choice.Success)
+                {
+                    string v = Regex.Unescape(choice.Groups[1].Value);
+                    if (!string.IsNullOrWhiteSpace(v)) return v;
+                }
+
+                // 回退：取所有 "content":"..." 中最后一个非空（与 DailyStory 一致，兼容多段 JSON）
+                string last = null;
+                foreach (Match m in Regex.Matches(json,
+                    "\"content\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"",
+                    RegexOptions.Singleline))
+                {
+                    string part = Regex.Unescape(m.Groups[1].Value);
+                    if (!string.IsNullOrWhiteSpace(part)) last = part;
+                }
+                return last;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[OpenAI] content 解析异常: {ex.Message}");
+                return null;
+            }
         }
         // 简易 JSON 提取辅助函数
         public static string ExtractJsonValue(string json, string key)
